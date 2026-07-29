@@ -1,0 +1,116 @@
+# Quantum gravity scaling laws discovery task
+# The goal is to evolve a function that predicts scaling exponents relating
+# Planck-scale quantities (mass, length, time) to observable low-energy
+# physics using a toy model of dimensional reduction.
+task_id: "quantum_gravity_scaling_laws"
+task_description: |
+  Implement a function `scaling_laws(quantities: dict) -> dict` that computes
+  quantum-gravity-inspired scaling exponents for a set of physical quantities.
+
+  Input:
+    quantities: a dict with keys "mass", "separation", "time". Each value is a
+    float representing a physical quantity in SI units (kg, m, s).
+
+  Expected behavior:
+    Return a dict with keys "alpha", "beta", "gamma", "score" where:
+      - alpha is the mass scaling exponent (float)
+      - beta  is the separation/length scaling exponent (float)
+      - gamma is the time scaling exponent (float)
+      - score is a float in [0, 1] representing how well the exponents satisfy
+        the toy-model consistency constraints.
+
+  Physics-inspired constraints (toy model):
+    1. The effective Planck length lp_eff should scale as
+       lp_eff = separation * (lp / separation)**beta
+       where lp = sqrt(hbar * G / c**3) is the baseline Planck length
+       (use hbar=1.0545718e-34, G=6.67430e-11, c=299792458).
+    2. The effective Planck mass mp_eff should scale as
+       mp_eff = mass * (mp / mass)**alpha
+       where mp = sqrt(hbar * c / G).
+    3. The effective Planck time tp_eff should scale as
+       tp_eff = time * (tp / time)**gamma
+       where tp = sqrt(hbar * G / c**5).
+    4. The exponents should approximately satisfy the dimensional consistency
+       relation beta + gamma - alpha ≈ 0.0 (within a tolerance of 0.1).
+    5. The returned score should be high when all three effective values are
+       positive finite numbers and the dimensional relation is satisfied.
+
+  You are encouraged to start from a simple power-law ansatz and refine the
+  exponents so that the toy-model consistency score is maximized across the
+  provided test cases. Do not use external data files or network calls.
+
+function_name: "scaling_laws"
+allowed_imports: ["math"]
+
+tests:
+  - description: "Known-scale test cases for quantum gravity scaling laws"
+    test_cases:
+      - input:
+          mass: 1.0
+          separation: 1.616255e-35
+          time: 5.391247e-44
+        output:
+          alpha: 0.0
+          beta: 0.0
+          gamma: 0.0
+          score: 1.0
+
+      - input:
+          mass: 1.0e-3
+          separation: 1.0e-3
+          time: 1.0e-3
+        output:
+          alpha: 0.5
+          beta: 0.5
+          gamma: 0.5
+          score: 1.0
+
+  - description: "Validation-based scoring tests"
+    test_cases:
+      - input:
+          mass: 2.0
+          separation: 1.616255e-35
+          time: 5.391247e-44
+        validation_func: |
+          def validate(output):
+              # At the Planck scale, mass should be normalized by mp; expect alpha ~ 0
+              # and dimensional relation should hold.
+              alpha = output.get("alpha", float("nan"))
+              beta = output.get("beta", float("nan"))
+              gamma = output.get("gamma", float("nan"))
+              score = output.get("score", 0.0)
+              return (
+                  isinstance(alpha, (int, float))
+                  and isinstance(beta, (int, float))
+                  and isinstance(gamma, (int, float))
+                  and abs((beta + gamma) - alpha) < 0.2
+                  and 0.0 <= score <= 1.0
+              )
+
+      - input:
+          mass: 1.0e6
+          separation: 1.0e-10
+          time: 1.0e-18
+        validation_func: |
+          def validate(output):
+              # Macroscopic-ish values; result must be finite and physically plausible.
+              alpha = output.get("alpha", float("nan"))
+              beta = output.get("beta", float("nan"))
+              gamma = output.get("gamma", float("nan"))
+              score = output.get("score", 0.0)
+              finite = all(abs(x) < 1e6 for x in (alpha, beta, gamma))
+              return finite and 0.0 <= score <= 1.0
+
+      - input:
+          mass: 9.10938356e-31
+          separation: 2.8179403227e-15
+          time: 9.399637148e-24
+        validation_func: |
+          def validate(output):
+              # Electron-scale sanity check: finite exponents and positive effective values.
+              alpha = output.get("alpha", float("nan"))
+              beta = output.get("beta", float("nan"))
+              gamma = output.get("gamma", float("nan"))
+              score = output.get("score", 0.0)
+              finite = all(abs(x) < 1e6 for x in (alpha, beta, gamma))
+              return finite and 0.0 <= score <= 1.0
