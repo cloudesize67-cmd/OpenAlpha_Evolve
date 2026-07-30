@@ -1,9 +1,10 @@
-                  
+                   
 import asyncio
 import json
 import logging
 import math
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -33,6 +34,20 @@ class EvaluatorAgent(EvaluatorAgentInterface, BaseAgent):
         except Exception as e:
             errors.append(f"Unexpected error during syntax check: {str(e)}")
         return errors
+
+    @staticmethod
+    def _is_docker_available() -> bool:
+        """Check whether the Docker CLI is available and the daemon is responsive."""
+        try:
+            result = subprocess.run(
+                ["docker", "info"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=5
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
 
     async def _execute_code_safely(
         self,
@@ -188,17 +203,35 @@ print(json.dumps(final_output, default=custom_json_serializer))
         ])
 
         proc = None
+        use_docker = self._is_docker_available()
+
+        if not use_docker:
+            logger.warning("Docker is not available or not responsive. Falling back to local subprocess execution for evaluation.")
+
         try:
-            logger.debug(f"Executing code in Docker: {' '.join(cmd)}")
-            start_time = time.monotonic()
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-            duration = time.monotonic() - start_time
-            logger.debug(f"Docker execution finished in {duration:.2f}s. Exit code: {proc.returncode}")
+            if use_docker:
+                logger.debug(f"Executing code in Docker: {' '.join(cmd)}")
+                start_time = time.monotonic()
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+                duration = time.monotonic() - start_time
+                logger.debug(f"Docker execution finished in {duration:.2f}s. Exit code: {proc.returncode}")
+            else:
+                logger.debug(f"Executing code locally: python {temp_file_path}")
+                start_time = time.monotonic()
+                proc = await asyncio.create_subprocess_exec(
+                    sys.executable, temp_file_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=temp_dir
+                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+                duration = time.monotonic() - start_time
+                logger.debug(f"Local execution finished in {duration:.2f}s. Exit code: {proc.returncode}")
 
             stdout_str = stdout.decode('utf-8', errors='replace').strip()
             stderr_str = stderr.decode('utf-8', errors='replace').strip()
@@ -206,7 +239,10 @@ print(json.dumps(final_output, default=custom_json_serializer))
             if proc.returncode != 0:
                 # If stdout is empty and stderr has content, it's likely a Docker/script init error
                 if not stdout_str and stderr_str:
-                    error_message = f"Execution failed with exit code {proc.returncode}. Docker error: '{stderr_str}'"
+                    if use_docker:
+                        error_message = f"Execution failed with exit code {proc.returncode}. Docker error: '{stderr_str}'"
+                    else:
+                        error_message = f"Execution failed with exit code {proc.returncode}. Local error: '{stderr_str}'"
                     logger.warning(error_message)
                     return None, error_message
                 # If stdout has content, it might be a script error with traceback in stderr, but JSON in stdout.
@@ -241,38 +277,50 @@ print(json.dumps(final_output, default=custom_json_serializer))
                 return None, error_message
 
         except asyncio.TimeoutError:
-            logger.warning(f"Execution for container '{container_name}' initiating timeout handling.")
-            if proc and proc.returncode is None: # Check if process is still running
-                logger.info(f"Attempting to stop Docker container: {container_name}")
-                stop_cmd = ["docker", "stop", container_name]
-                try:
-                    stop_proc = await asyncio.create_subprocess_exec(*stop_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                    _, stop_stderr_bytes = await asyncio.wait_for(stop_proc.communicate(), timeout=10) # 10s for docker stop
-                    if stop_proc.returncode != 0:
-                        logger.error(f"Failed to stop container {container_name}. Exit: {stop_proc.returncode}. Stderr: {stop_stderr_bytes.decode(errors='replace')}")
-                        kill_cmd = ["docker", "kill", container_name]
-                        kill_proc = await asyncio.create_subprocess_exec(*kill_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                        kill_stdout_bytes, kill_stderr_bytes = await asyncio.wait_for(kill_proc.communicate(), timeout=5) # 5s for docker kill
-                        if kill_proc.returncode == 0:
-                             logger.info(f"Successfully killed container {container_name} after stop failed.")
+            if use_docker:
+                logger.warning(f"Execution for container '{container_name}' initiating timeout handling.")
+                if proc and proc.returncode is None: # Check if process is still running
+                    logger.info(f"Attempting to stop Docker container: {container_name}")
+                    stop_cmd = ["docker", "stop", container_name]
+                    try:
+                        stop_proc = await asyncio.create_subprocess_exec(*stop_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                        _, stop_stderr_bytes = await asyncio.wait_for(stop_proc.communicate(), timeout=10) # 10s for docker stop
+                        if stop_proc.returncode != 0:
+                            logger.error(f"Failed to stop container {container_name}. Exit: {stop_proc.returncode}. Stderr: {stop_stderr_bytes.decode(errors='replace')}")
+                            kill_cmd = ["docker", "kill", container_name]
+                            kill_proc = await asyncio.create_subprocess_exec(*kill_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                            kill_stdout_bytes, kill_stderr_bytes = await asyncio.wait_for(kill_proc.communicate(), timeout=5) # 5s for docker kill
+                            if kill_proc.returncode == 0:
+                                 logger.info(f"Successfully killed container {container_name} after stop failed.")
+                            else:
+                                 logger.error(f"Failed to kill container {container_name}. Exit: {kill_proc.returncode}. Stderr: {kill_stderr_bytes.decode(errors='replace')}")
                         else:
-                             logger.error(f"Failed to kill container {container_name}. Exit: {kill_proc.returncode}. Stderr: {kill_stderr_bytes.decode(errors='replace')}")
-                    else:
-                        logger.info(f"Successfully stopped container {container_name}.")
-                except asyncio.TimeoutError:
-                    logger.error(f"Timeout trying to stop/kill container {container_name}. It might be orphaned.")
-                except Exception as e_stop:
-                    logger.error(f"Error stopping/killing container {container_name}: {e_stop}")
-            
-            if proc: # Original docker run process
-                try:
-                    if proc.returncode is None: proc.kill()
-                    await proc.wait() 
-                except ProcessLookupError: pass
-                except Exception as e_kill: logger.error(f"Error trying to kill original subprocess after docker stop/kill: {e_kill}")
-            
-            logger.warning(f"Code execution in Docker container '{container_name}' timed out after {timeout} seconds.")
-            return None, f"Execution timed out after {timeout} seconds (container {container_name})."
+                            logger.info(f"Successfully stopped container {container_name}.")
+                    except asyncio.TimeoutError:
+                        logger.error(f"Timeout trying to stop/kill container {container_name}. It might be orphaned.")
+                    except Exception as e_stop:
+                        logger.error(f"Error stopping/killing container {container_name}: {e_stop}")
+                
+                if proc: # Original docker run process
+                    try:
+                        if proc.returncode is None: proc.kill()
+                        await proc.wait() 
+                    except ProcessLookupError: pass
+                    except Exception as e_kill: logger.error(f"Error trying to kill original subprocess after docker stop/kill: {e_kill}")
+                
+                logger.warning(f"Code execution in Docker container '{container_name}' timed out after {timeout} seconds.")
+                return None, f"Execution timed out after {timeout} seconds (container {container_name})."
+            else:
+                if proc and proc.returncode is None:
+                    try:
+                        proc.kill()
+                        await proc.wait()
+                    except ProcessLookupError:
+                        pass
+                    except Exception as e_kill:
+                        logger.error(f"Error killing local subprocess after timeout: {e_kill}")
+                logger.warning(f"Local code execution timed out after {timeout} seconds.")
+                return None, f"Execution timed out after {timeout} seconds (local subprocess)."
         except Exception as e:
             logger.error(f"An unexpected error occurred during code execution: {e}", exc_info=True)
             return None, f"Unexpected execution error: {str(e)}"

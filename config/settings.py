@@ -19,10 +19,10 @@ EVALUATION_MODEL = os.getenv("EVALUATION_MODEL")
 # LiteLLM Configuration
 LITELLM_DEFAULT_MODEL = os.getenv("LITELLM_DEFAULT_MODEL", "gpt-3.5-turbo")
 LITELLM_DEFAULT_BASE_URL = os.getenv("LITELLM_DEFAULT_BASE_URL", None)
-LITELLM_MAX_TOKENS = os.getenv("LITELLM_MAX_TOKENS")
-LITELLM_TEMPERATURE = os.getenv("LITELLM_TEMPERATURE")
-LITELLM_TOP_P = os.getenv("LITELLM_TOP_P")
-LITELLM_TOP_K = os.getenv("LITELLM_TOP_K")
+LITELLM_MAX_TOKENS = int(os.getenv("LITELLM_MAX_TOKENS")) if os.getenv("LITELLM_MAX_TOKENS") else None
+LITELLM_TEMPERATURE = float(os.getenv("LITELLM_TEMPERATURE")) if os.getenv("LITELLM_TEMPERATURE") else None
+LITELLM_TOP_P = float(os.getenv("LITELLM_TOP_P")) if os.getenv("LITELLM_TOP_P") else None
+LITELLM_TOP_K = int(os.getenv("LITELLM_TOP_K")) if os.getenv("LITELLM_TOP_K") else None
 
 # Specific model names for strategic use (can be same as LITELLM_DEFAULT_MODEL if only one is used)
 LLM_PRIMARY_MODEL = os.getenv("LLM_PRIMARY_MODEL", LITELLM_DEFAULT_MODEL)

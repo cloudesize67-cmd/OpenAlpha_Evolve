@@ -239,8 +239,6 @@ class TaskManagerAgent(TaskManagerInterface):
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-    task_manager = TaskManagerAgent(task_definition=sample_task)
-
     sample_task = TaskDefinition(
         id="sum_list_task_001",
         description="Write a Python function called `solve(numbers)` that takes a list of integers `numbers` and returns their sum. The function should handle empty lists correctly by returning 0.",
@@ -253,7 +251,9 @@ if __name__ == '__main__':
         evaluation_criteria={"target_metric": "correctness", "goal": "maximize"},
         initial_code_prompt = "Please provide a Python function `solve(numbers)` that sums a list of integers. Handle empty lists by returning 0."
     )
-    
+
+    task_manager = TaskManagerAgent(task_definition=sample_task)
+
     task_manager.num_generations = 3
     task_manager.population_size = 5
     task_manager.num_parents_to_select = 2
