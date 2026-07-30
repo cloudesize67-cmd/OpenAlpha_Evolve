@@ -29,11 +29,22 @@ task_description: |
   sourced by the mean quantum matter density (semiclassical/Moller-Rosenfeld
   coupling): grad^2 Phi(x) = (4*pi*G/c^2) * <psi| T_00(x) |psi>.
 
-  Implement calculate_wick_contraction(mode="diagonal" | "full_sum") that
-  returns a 2x2 sympy Matrix representing the transition-amplitude matrix
-  beta_ij at 4th order in the Dyson series, built from a coupling kernel
-  V_ij (2x2 sympy Matrix of free symbols V_LL, V_LR, V_RL, V_RR) and an
-  overall prefactor Lambda*t**2 (Lambda, t sympy symbols):
+  Implement calculate_wick_contraction(mode="diagonal" | "full_sum")
+  representing the transition-amplitude matrix beta_ij at 4th order in the
+  Dyson series, built from a coupling kernel V_ij (2x2 sympy Matrix of free
+  symbols V_LL, V_LR, V_RL, V_RR) and an overall prefactor Lambda*t**2
+  (Lambda, t sympy symbols).
+
+  RETURN FORMAT (important): return a 2x2 nested Python list of STRINGS,
+  where each string is the str() of the corresponding sympy expression --
+  e.g. [["Lambda*t**2*V_LL**2", "..."], ["...", "..."]]. Do NOT return a
+  sympy Matrix object directly: results are marshalled out of the sandbox
+  as JSON, and sympy objects are not JSON-serializable (returning one makes
+  the program fail evaluation outright). Compute with sympy internally, then
+  stringify each entry on the way out; the checks re-parse them with
+  sympy.sympify.
+
+  The two modes:
 
     - mode="diagonal": the Aziz-Howl construction, fixing the initial
       branch pair equal to the final one (beta_ij;ij, no sum over initial
@@ -98,10 +109,28 @@ tests:
         validation_func: |
           def validate(matrix):
               import sympy as sp
-              if not isinstance(matrix, sp.MatrixBase) or matrix.shape != (2, 2):
-                  return f"Expected a 2x2 sympy Matrix, got {type(matrix)} / shape {getattr(matrix, 'shape', None)}"
-              det = sp.simplify(matrix.det())
-              return (det != 0) or f"Diagonal construction should be generically entangled (det != 0 for generic V_ij), got det={det}"
+              # Results cross the sandbox boundary as JSON, so the candidate
+              # returns a 2x2 nested list of sympy-expression strings.
+              if not isinstance(matrix, (list, tuple)) or len(matrix) != 2:
+                  return f"Expected a 2x2 nested list of expression strings, got {type(matrix)}"
+              for row in matrix:
+                  if not isinstance(row, (list, tuple)) or len(row) != 2:
+                      return f"Expected each row to have 2 entries, got {row!r}"
+              # Pin the symbol namespace: bare sympify() would resolve "Lambda"
+              # to the sympy.Lambda CLASS, not a symbol, and blow up.
+              _syms = {n: sp.Symbol(n) for n in
+                       ("Lambda", "t", "V_LL", "V_LR", "V_RL", "V_RR")}
+              try:
+                  M = sp.Matrix([[sp.sympify(str(e), locals=_syms) for e in row]
+                                 for row in matrix])
+              except Exception as exc:
+                  return f"Could not parse entries as sympy expressions: {exc}"
+              det = sp.simplify(M.det())
+              # bool() is required: sympy comparisons return sympy Booleans,
+              # and the evaluator only counts an explicit Python True as a pass.
+              if bool(det != 0):
+                  return True
+              return f"Diagonal construction should be generically entangled (det != 0 for generic V_ij), got det={det}"
 
   - description: "Full-sum (Gundhi) construction is ALWAYS separable -- a hard constraint for any V_ij"
     name: "full_sum_always_separable"
@@ -110,10 +139,28 @@ tests:
         validation_func: |
           def validate(matrix):
               import sympy as sp
-              if not isinstance(matrix, sp.MatrixBase) or matrix.shape != (2, 2):
-                  return f"Expected a 2x2 sympy Matrix, got {type(matrix)} / shape {getattr(matrix, 'shape', None)}"
-              det = sp.simplify(matrix.det())
-              return (det == 0) or f"Full-sum construction must be exactly separable (det == 0) for ANY V_ij -- this is a theorem, not approximate. Got det={det}"
+              # Results cross the sandbox boundary as JSON, so the candidate
+              # returns a 2x2 nested list of sympy-expression strings.
+              if not isinstance(matrix, (list, tuple)) or len(matrix) != 2:
+                  return f"Expected a 2x2 nested list of expression strings, got {type(matrix)}"
+              for row in matrix:
+                  if not isinstance(row, (list, tuple)) or len(row) != 2:
+                      return f"Expected each row to have 2 entries, got {row!r}"
+              # Pin the symbol namespace: bare sympify() would resolve "Lambda"
+              # to the sympy.Lambda CLASS, not a symbol, and blow up.
+              _syms = {n: sp.Symbol(n) for n in
+                       ("Lambda", "t", "V_LL", "V_LR", "V_RL", "V_RR")}
+              try:
+                  M = sp.Matrix([[sp.sympify(str(e), locals=_syms) for e in row]
+                                 for row in matrix])
+              except Exception as exc:
+                  return f"Could not parse entries as sympy expressions: {exc}"
+              det = sp.simplify(M.det())
+              # bool() is required: sympy comparisons return sympy Booleans,
+              # and the evaluator only counts an explicit Python True as a pass.
+              if bool(det == 0):
+                  return True
+              return f"Full-sum construction must be exactly separable (det == 0) for ANY V_ij -- this is a theorem, not approximate. Got det={det}"
 
   - description: "Full-sum construction must be an exact outer product (rank <= 1), not just accidentally zero determinant"
     name: "full_sum_is_outer_product"
@@ -122,7 +169,23 @@ tests:
         validation_func: |
           def validate(matrix):
               import sympy as sp
-              if not isinstance(matrix, sp.MatrixBase) or matrix.shape != (2, 2):
-                  return f"Expected a 2x2 sympy Matrix, got {type(matrix)} / shape {getattr(matrix, 'shape', None)}"
-              rank = matrix.rank()
-              return (rank <= 1) or f"Full-sum construction must have rank <= 1 (exact outer product), got rank={rank}"
+              # Results cross the sandbox boundary as JSON, so the candidate
+              # returns a 2x2 nested list of sympy-expression strings.
+              if not isinstance(matrix, (list, tuple)) or len(matrix) != 2:
+                  return f"Expected a 2x2 nested list of expression strings, got {type(matrix)}"
+              for row in matrix:
+                  if not isinstance(row, (list, tuple)) or len(row) != 2:
+                      return f"Expected each row to have 2 entries, got {row!r}"
+              # Pin the symbol namespace: bare sympify() would resolve "Lambda"
+              # to the sympy.Lambda CLASS, not a symbol, and blow up.
+              _syms = {n: sp.Symbol(n) for n in
+                       ("Lambda", "t", "V_LL", "V_LR", "V_RL", "V_RR")}
+              try:
+                  M = sp.Matrix([[sp.sympify(str(e), locals=_syms) for e in row]
+                                 for row in matrix])
+              except Exception as exc:
+                  return f"Could not parse entries as sympy expressions: {exc}"
+              rank = M.rank()
+              if int(rank) <= 1:
+                  return True
+              return f"Full-sum construction must have rank <= 1 (exact outer product), got rank={rank}"
