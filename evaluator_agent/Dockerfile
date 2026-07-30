@@ -18,9 +18,10 @@ ENV PYTHONUNBUFFERED=1
 
 # 6. Install packages that task YAML files declare in `allowed_imports` but
 #    that aren't in the Python standard library (e.g. circle_packing.yaml and
-#    quantum_gravity_scaling.yaml both allow "numpy" -- without this, any
-#    evolved code that imports it fails immediately inside the sandbox).
-RUN pip install --no-cache-dir numpy
+#    quantum_gravity_scaling.yaml both allow "numpy"; gravity_entanglement_
+#    wick_derivation.yaml allows "sympy" -- without this, any evolved code
+#    that imports them fails immediately inside the sandbox).
+RUN pip install --no-cache-dir numpy sympy
 
 # The default command can be omitted if the command is always specified during `docker run`
 # For example, `python temp_script.py` will be the command passed by the EvaluatorAgent.
