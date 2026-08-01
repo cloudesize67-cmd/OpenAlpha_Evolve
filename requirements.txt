@@ -1,7 +1,7 @@
 # Core Libraries
 litellm
 python-dotenv>=1.0.0
-PyYAML==6.0
+PyYAML>=6.0.2
 tiktoken
 openai
 sympy
