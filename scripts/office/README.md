@@ -41,10 +41,20 @@ conservative:
   merge; runs with breaks, tabs, drawings, field codes or footnote refs are
   barriers.
 - Runs merge only with an immediately-adjacent sibling of the same parent, so
-  text never crosses a `<w:ins>`/`<w:del>` tracked-change, hyperlink, or
-  paragraph boundary.
+  text never crosses a `<w:ins>`/`<w:del>` tracked-change, a *different*
+  hyperlink, or a paragraph boundary.
 - `xml:space="preserve"` is added whenever a merge would otherwise strand
   edge whitespace.
+
+**Hyperlinks are coalesced too.** Word also fragments a single link into a run
+of adjacent `<w:hyperlink>` elements — each pointing at the same target but
+wrapping only a slice of the visible text — so `https://example.com/path` can
+live across three `<w:hyperlink r:id="rId7">` elements and be just as
+unfindable as fragmented runs. Adjacent hyperlinks under the same parent with
+identical link attributes (the `r:id` relationship or `w:anchor` bookmark, plus
+tooltip, target frame, history, …) are merged into one hyperlink, and their
+runs are then coalesced by the run pass. Hyperlinks with different targets, or
+separated by any other content, are left alone.
 
 By default it processes `document.xml`, the notes, headers, footers and
 comments; pass `--parts a.xml,b.xml` to narrow it, or `--dry-run` to preview.

@@ -29,6 +29,7 @@ merge_runs = _load("merge_runs", "scripts/merge_runs.py")
 validate = _load("office_validate", "scripts/office/validate.py")
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 CT = "http://schemas.openxmlformats.org/package/2006/content-types"
 REL = "http://schemas.openxmlformats.org/package/2006/relationships"
 DOC_CT = ("application/vnd.openxmlformats-officedocument."
@@ -58,7 +59,8 @@ _DOC_RELS = (
 def _document(body_xml):
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        f'<w:document xmlns:w="{W}"><w:body>{body_xml}</w:body></w:document>')
+        f'<w:document xmlns:w="{W}" xmlns:r="{R}">'
+        f'<w:body>{body_xml}</w:body></w:document>')
 
 
 def _run(text, props="", space=False):
@@ -69,6 +71,17 @@ def _run(text, props="", space=False):
 
 def _para(*runs):
     return "<w:p>" + "".join(runs) + "</w:p>"
+
+
+def _hyperlink(rid, *runs, anchor=None, tooltip=None):
+    attrs = ""
+    if rid is not None:
+        attrs += f' r:id="{rid}"'
+    if anchor is not None:
+        attrs += f' w:anchor="{anchor}"'
+    if tooltip is not None:
+        attrs += f' w:tooltip="{tooltip}"'
+    return f"<w:hyperlink{attrs}>" + "".join(runs) + "</w:hyperlink>"
 
 
 def _make_package(tmp, body_xml, extra_parts=None):
@@ -117,13 +130,21 @@ class MergeRunsTests(unittest.TestCase):
         root = etree.parse(os.path.join(unpacked, "word", "document.xml")).getroot()
         return len(list(root.iter("{%s}r" % W)))
 
+    def _hyperlink_count(self, unpacked):
+        from lxml import etree
+        root = etree.parse(os.path.join(unpacked, "word", "document.xml")).getroot()
+        return len(list(root.iter("{%s}hyperlink" % W)))
+
+    def _process(self, unpacked):
+        return merge_runs.process_file(
+            os.path.join(unpacked, "word", "document.xml"))
+
     def test_merges_adjacent_identical_runs(self):
         body = _para(_run("Hel"), _run("lo wor"), _run("ld"))
         unpacked = _unpack(_make_package(self.dir, body),
                            os.path.join(self.dir, "unpacked"))
-        removed = merge_runs.process_file(
-            os.path.join(unpacked, "word", "document.xml"))
-        self.assertEqual(removed, 2)
+        result = self._process(unpacked)
+        self.assertEqual(result["runs"], 2)
         self.assertEqual(self._run_count(unpacked), 1)
         self.assertEqual(self._document_text(unpacked), "Hello world")
 
@@ -131,9 +152,8 @@ class MergeRunsTests(unittest.TestCase):
         body = _para(_run("bold", props="<w:b/>"), _run("plain"))
         unpacked = _unpack(_make_package(self.dir, body),
                            os.path.join(self.dir, "unpacked"))
-        removed = merge_runs.process_file(
-            os.path.join(unpacked, "word", "document.xml"))
-        self.assertEqual(removed, 0)
+        result = self._process(unpacked)
+        self.assertEqual(result["runs"], 0)
         self.assertEqual(self._run_count(unpacked), 2)
 
     def test_does_not_merge_across_tracked_change(self):
@@ -142,11 +162,10 @@ class MergeRunsTests(unittest.TestCase):
                      _run("keep2"))
         unpacked = _unpack(_make_package(self.dir, body),
                            os.path.join(self.dir, "unpacked"))
-        removed = merge_runs.process_file(
-            os.path.join(unpacked, "word", "document.xml"))
+        result = self._process(unpacked)
         # The <w:ins> is a barrier; the two outer runs are not adjacent siblings
         # of each other in a mergeable way.
-        self.assertEqual(removed, 0)
+        self.assertEqual(result["runs"], 0)
 
     def test_run_with_break_is_a_barrier(self):
         body = _para(_run("a"),
@@ -154,9 +173,8 @@ class MergeRunsTests(unittest.TestCase):
                      _run("c"))
         unpacked = _unpack(_make_package(self.dir, body),
                            os.path.join(self.dir, "unpacked"))
-        removed = merge_runs.process_file(
-            os.path.join(unpacked, "word", "document.xml"))
-        self.assertEqual(removed, 0)
+        result = self._process(unpacked)
+        self.assertEqual(result["runs"], 0)
 
     def test_internal_whitespace_needs_no_preserve(self):
         # A space that becomes internal after merging is safe without preserve.
@@ -189,8 +207,8 @@ class MergeRunsTests(unittest.TestCase):
                            os.path.join(self.dir, "unpacked"))
         path = os.path.join(unpacked, "word", "document.xml")
         before = open(path, encoding="utf-8").read()
-        removed = merge_runs.process_file(path, dry_run=True)
-        self.assertEqual(removed, 1)
+        result = merge_runs.process_file(path, dry_run=True)
+        self.assertEqual(result["runs"], 1)
         self.assertEqual(open(path, encoding="utf-8").read(), before)
 
     def test_directory_target_resolves_word_document(self):
@@ -200,6 +218,69 @@ class MergeRunsTests(unittest.TestCase):
         rc = merge_runs.main([unpacked])
         self.assertEqual(rc, 0)
         self.assertEqual(self._run_count(unpacked), 1)
+
+    # --- hyperlink coalescing ---------------------------------------------
+
+    def test_merges_runs_inside_single_hyperlink(self):
+        body = _para(_hyperlink("rId5", _run("exa"), _run("mple.c"), _run("om")))
+        unpacked = _unpack(_make_package(self.dir, body),
+                           os.path.join(self.dir, "unpacked"))
+        result = self._process(unpacked)
+        self.assertEqual(result["runs"], 2)
+        self.assertEqual(self._hyperlink_count(unpacked), 1)
+        self.assertEqual(self._run_count(unpacked), 1)
+        self.assertEqual(self._document_text(unpacked), "example.com")
+
+    def test_merges_adjacent_same_target_hyperlinks(self):
+        body = _para(_hyperlink("rId5", _run("exa")),
+                     _hyperlink("rId5", _run("mple.c")),
+                     _hyperlink("rId5", _run("om")))
+        unpacked = _unpack(_make_package(self.dir, body),
+                           os.path.join(self.dir, "unpacked"))
+        result = self._process(unpacked)
+        # two hyperlinks folded away; their runs then coalesced into one
+        self.assertEqual(result["hyperlinks"], 2)
+        self.assertEqual(self._hyperlink_count(unpacked), 1)
+        self.assertEqual(self._run_count(unpacked), 1)
+        self.assertEqual(self._document_text(unpacked), "example.com")
+
+    def test_does_not_merge_hyperlinks_with_different_target(self):
+        body = _para(_hyperlink("rId5", _run("one")),
+                     _hyperlink("rId6", _run("two")))
+        unpacked = _unpack(_make_package(self.dir, body),
+                           os.path.join(self.dir, "unpacked"))
+        result = self._process(unpacked)
+        self.assertEqual(result["hyperlinks"], 0)
+        self.assertEqual(self._hyperlink_count(unpacked), 2)
+
+    def test_does_not_merge_hyperlinks_differing_in_tooltip(self):
+        body = _para(_hyperlink("rId5", _run("one"), tooltip="A"),
+                     _hyperlink("rId5", _run("two"), tooltip="B"))
+        unpacked = _unpack(_make_package(self.dir, body),
+                           os.path.join(self.dir, "unpacked"))
+        result = self._process(unpacked)
+        self.assertEqual(result["hyperlinks"], 0)
+        self.assertEqual(self._hyperlink_count(unpacked), 2)
+
+    def test_run_between_hyperlinks_is_a_barrier(self):
+        body = _para(_hyperlink("rId5", _run("one")),
+                     _run(" and "),
+                     _hyperlink("rId5", _run("two")))
+        unpacked = _unpack(_make_package(self.dir, body),
+                           os.path.join(self.dir, "unpacked"))
+        result = self._process(unpacked)
+        self.assertEqual(result["hyperlinks"], 0)
+        self.assertEqual(self._hyperlink_count(unpacked), 2)
+
+    def test_merges_anchor_hyperlinks(self):
+        body = _para(_hyperlink(None, _run("see "), anchor="bkmk"),
+                     _hyperlink(None, _run("section"), anchor="bkmk"))
+        unpacked = _unpack(_make_package(self.dir, body),
+                           os.path.join(self.dir, "unpacked"))
+        result = self._process(unpacked)
+        self.assertEqual(result["hyperlinks"], 1)
+        self.assertEqual(self._hyperlink_count(unpacked), 1)
+        self.assertEqual(self._document_text(unpacked), "see section")
 
 
 class ValidateTests(unittest.TestCase):

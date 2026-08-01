@@ -20,12 +20,22 @@ It is deliberately conservative:
     any other content are left untouched, and act as barriers.
   * Runs merge only with an immediately-adjacent sibling of the same parent, so
     text is never dragged across a ``<w:ins>``/``<w:del>`` tracked-change
-    boundary, a hyperlink boundary, or a paragraph boundary.
+    boundary, between two *different* hyperlinks, or across a paragraph
+    boundary.
   * Run properties are compared by canonical (c14n) form, so runs merge only
     when their formatting is genuinely identical.
   * ``xml:space="preserve"`` is set on the merged text whenever the combined
     string has leading/trailing whitespace or either source asked to preserve
     it, so no whitespace is silently dropped.
+
+Hyperlinks are coalesced too. Word also fragments a single link into a run of
+adjacent ``<w:hyperlink>`` elements -- each pointing at the same target but
+wrapping only a slice of the visible text -- which leaves the link text just as
+unfindable as fragmented runs. Adjacent hyperlinks that share the same parent
+and identical link attributes (the relationship id ``r:id`` or ``w:anchor``
+plus tooltip, target frame, etc.) are merged into one hyperlink; their runs are
+then coalesced by the ordinary run pass. Hyperlinks with different targets, or
+separated by any other content, are left alone.
 
 lxml is used so the rest of the document round-trips faithfully: namespace
 prefixes, attribute order and untouched byte ranges are preserved. The file is
@@ -45,9 +55,12 @@ from lxml import etree
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 XML_NS = "http://www.w3.org/XML/1998/namespace"
+R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 
 W = "{%s}" % W_NS
 XML_SPACE = "{%s}space" % XML_NS
+R_ID = "{%s}id" % R_NS
+W_ANCHOR = W + "anchor"
 
 # Parts of an unpacked .docx that hold runs worth coalescing.
 _DEFAULT_PARTS = (
@@ -163,6 +176,71 @@ def _merge_runs_in_tree(root):
     return removed
 
 
+def _is_mergeable_hyperlink(elem):
+    """True if ``elem`` is a ``<w:hyperlink>`` that points somewhere.
+
+    A hyperlink must carry a real target -- a relationship id (``r:id``, an
+    external/URL link) or a ``w:anchor`` (an internal bookmark) -- before it is
+    a candidate for merging. Attribute-less hyperlinks are left untouched.
+    """
+    if _localname(elem) != "hyperlink":
+        return False
+    return elem.get(R_ID) is not None or elem.get(W_ANCHOR) is not None
+
+
+def _hyperlink_key(elem):
+    """The link identity of a hyperlink: its full set of attributes.
+
+    Word's fragments of one link carry identical attributes, so requiring exact
+    attribute equality merges genuine fragments while keeping distinct links
+    (different URL, tooltip, target frame, ...) apart.
+    """
+    return tuple(sorted(elem.attrib.items()))
+
+
+def _merge_hyperlink_pair(first, second):
+    """Fold ``second`` (an adjacent, same-target hyperlink) into ``first``.
+
+    Every child of ``second`` is moved to the end of ``first`` (lxml carries
+    each child's tail with it), then ``second`` is removed. The text that
+    followed ``second`` is carried onto ``first`` so nothing after the link is
+    lost. Callers guarantee ``first`` has no significant tail between the two.
+    """
+    for child in list(second):
+        first.append(child)
+    first.tail = second.tail
+    second.getparent().remove(second)
+
+
+def _merge_hyperlinks_in_tree(root):
+    """Merge adjacent same-target hyperlinks throughout ``root``.
+
+    Returns the number of hyperlink elements removed. Like the run pass,
+    hyperlinks are grouped by parent and only immediately-adjacent siblings with
+    identical link attributes fold together. A hyperlink carrying significant
+    trailing text (a gap before the next link) acts as a barrier so that text is
+    never dropped.
+    """
+    removed = 0
+    parents = {h.getparent() for h in root.iter(W + "hyperlink")}
+    for parent in parents:
+        if parent is None:
+            continue
+        anchor = None  # the hyperlink others are folding into
+        for child in list(parent):
+            if _is_mergeable_hyperlink(child):
+                if (anchor is not None
+                        and not (anchor.tail and anchor.tail.strip())
+                        and _hyperlink_key(anchor) == _hyperlink_key(child)):
+                    _merge_hyperlink_pair(anchor, child)
+                    removed += 1
+                    continue
+                anchor = child
+            else:
+                anchor = None
+    return removed
+
+
 def _resolve_part_paths(target, parts):
     """Map a CLI target to a list of concrete XML files to process."""
     if os.path.isfile(target):
@@ -183,14 +261,21 @@ def _resolve_part_paths(target, parts):
 
 
 def process_file(path, dry_run=False):
-    """Merge runs in one XML part. Returns the count of runs removed."""
+    """Merge hyperlinks then runs in one XML part.
+
+    Returns ``{"runs": int, "hyperlinks": int}`` -- the number of run and
+    hyperlink elements removed. Hyperlinks are merged first so that the runs
+    they contribute are then coalesced by the run pass.
+    """
     # Keep the byte structure of the file intact apart from the merges.
     parser = etree.XMLParser(remove_blank_text=False, resolve_entities=False)
     tree = etree.parse(path, parser)
-    removed = _merge_runs_in_tree(tree.getroot())
-    if removed and not dry_run:
+    root = tree.getroot()
+    hyperlinks = _merge_hyperlinks_in_tree(root)
+    runs = _merge_runs_in_tree(root)
+    if (runs or hyperlinks) and not dry_run:
         tree.write(path, xml_declaration=True, encoding="UTF-8", standalone=True)
-    return removed
+    return {"runs": runs, "hyperlinks": hyperlinks}
 
 
 def main(argv=None):
@@ -206,21 +291,24 @@ def main(argv=None):
              "directory (default: the standard document/notes/headers/footers)")
     parser.add_argument(
         "--dry-run", action="store_true",
-        help="report how many runs would be merged without writing files")
+        help="report how much would be merged without writing files")
     args = parser.parse_args(argv)
 
     parts = [p.strip() for p in args.parts.split(",") if p.strip()]
     paths = _resolve_part_paths(args.target, parts)
 
-    total = 0
+    total_runs = total_links = 0
+    verb = "would merge" if args.dry_run else "merged"
     for path in paths:
-        removed = process_file(path, dry_run=args.dry_run)
-        total += removed
-        if removed:
-            verb = "would merge" if args.dry_run else "merged"
-            print(f"{verb} {removed} run(s) in {path}")
+        result = process_file(path, dry_run=args.dry_run)
+        total_runs += result["runs"]
+        total_links += result["hyperlinks"]
+        if result["runs"] or result["hyperlinks"]:
+            print(f"{verb} {result['hyperlinks']} hyperlink(s) and "
+                  f"{result['runs']} run(s) in {path}")
     tail = " (dry run)" if args.dry_run else ""
-    print(f"Done: {total} run(s) coalesced across {len(paths)} part(s){tail}")
+    print(f"Done: {total_links} hyperlink(s) and {total_runs} run(s) coalesced "
+          f"across {len(paths)} part(s){tail}")
     return 0
 
 
