@@ -32,9 +32,13 @@ data/
 
 ## Using it to improve the system
 
-- **Seed future searches.** Feed high-fitness entries from `best_corpus/<task>.jsonl`
-  into a run as starting points instead of always generating a fresh population
-  from scratch.
+- **Seed future searches (wired in).** The initial population is automatically
+  warm-started from `best_corpus/<task_id>.jsonl`: the top entries are injected
+  as gen-0 seed programs (ids `..._gen0_seed<i>`) and re-evaluated, while the
+  rest of the population is still generated fresh so the search keeps exploring.
+  Controlled by `SEED_FROM_CORPUS` (default on), `SEED_CORPUS_COUNT` (default 2,
+  capped at `POPULATION_SIZE - 1`), and `BEST_CORPUS_DIR`. Tasks with no corpus
+  file behave exactly as before (fully fresh generation).
 - **Few-shot exemplars.** Use the top corpus entries as worked examples in the
   initial/mutation prompts for the same task.
 - **Study what works.** `programs.jsonl` + `winner_lineage` in `summary.json`

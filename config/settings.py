@@ -44,6 +44,20 @@ ELITISM_COUNT = 1
 MUTATION_RATE = 0.7
 CROSSOVER_RATE = 0.2
 
+# Corpus Seeding Settings
+# When enabled, the initial population is warm-started from the accumulated
+# best-program corpus for the task (data/best_corpus/<task_id>.jsonl, produced
+# by scripts/archive_run.py) instead of generating every gen-0 program fresh.
+# Seed programs are re-evaluated like any other candidate, and the remainder of
+# the population is still generated fresh so exploration is preserved. Has no
+# effect when the corpus file is absent or empty (e.g. a brand-new task), so the
+# default is safe: unseeded tasks behave exactly as before.
+SEED_FROM_CORPUS = os.getenv("SEED_FROM_CORPUS", "True").lower() == "true"
+# Max number of corpus programs to inject as seeds (capped at POPULATION_SIZE - 1
+# so at least one fresh program is always generated).
+SEED_CORPUS_COUNT = int(os.getenv("SEED_CORPUS_COUNT", "2"))
+BEST_CORPUS_DIR = os.getenv("BEST_CORPUS_DIR", "data/best_corpus")
+
 # Island Model Settings
 NUM_ISLANDS = 4  # Number of subpopulations
 MIGRATION_INTERVAL = 4  # Number of generations between migrations
