@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import asyncio
 
 from litellm import acompletion
@@ -12,33 +12,17 @@ from litellm.exceptions import (
     RateLimitError
 )
 
+try:
+    import anthropic
+except ImportError:  # pragma: no cover - anthropic is a declared dependency, but degrade gracefully
+    anthropic = None
+
 from config import settings
 from core.interfaces import CodeGeneratorInterface
 
 logger = logging.getLogger(__name__)
 
-class CodeGeneratorAgent(CodeGeneratorInterface):
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        super().__init__(config)
-        self.model_name = settings.LITELLM_DEFAULT_MODEL
-        self.generation_config = {
-            "temperature": settings.LITELLM_TEMPERATURE,
-            "top_p": settings.LITELLM_TOP_P,
-            "top_k": settings.LITELLM_TOP_K,
-            "max_tokens": settings.LITELLM_MAX_TOKENS,
-        }
-        self.litellm_extra_params = {
-            "base_url": settings.LITELLM_DEFAULT_BASE_URL,
-        }
-        logger.info(f"CodeGeneratorAgent initialized with model: {self.model_name}")
-
-    async def generate_code(self, prompt: str, model_name: Optional[str] = None, temperature: Optional[float] = None, output_format: str = "code", litellm_extra_params: Optional[Dict[str, Any]] = None) -> str:
-        effective_model_name = model_name if model_name else self.model_name
-        litellm_extra_params = litellm_extra_params or self.litellm_extra_params
-        logger.info(f"Attempting to generate code using model: {effective_model_name}, output_format: {output_format}")
-        
-        if output_format == "diff":
-            prompt += '''
+_DIFF_FORMAT_INSTRUCTIONS = '''
 
 I need you to provide your changes as a sequence of diff blocks in the following format:
 
@@ -75,7 +59,30 @@ def calculate_sum(numbers):
 
 Make sure your diff can be applied correctly!
 '''
+
+class CodeGeneratorAgent(CodeGeneratorInterface):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        super().__init__(config)
+        self.model_name = settings.LITELLM_DEFAULT_MODEL
+        self.generation_config = {
+            "temperature": settings.LITELLM_TEMPERATURE,
+            "top_p": settings.LITELLM_TOP_P,
+            "top_k": settings.LITELLM_TOP_K,
+            "max_tokens": settings.LITELLM_MAX_TOKENS,
+        }
+        self.litellm_extra_params = {
+            "base_url": settings.LITELLM_DEFAULT_BASE_URL,
+        }
+        logger.info(f"CodeGeneratorAgent initialized with model: {self.model_name}")
+
+    async def generate_code(self, prompt: str, model_name: Optional[str] = None, temperature: Optional[float] = None, output_format: str = "code", litellm_extra_params: Optional[Dict[str, Any]] = None) -> str:
+        effective_model_name = model_name if model_name else self.model_name
+        litellm_extra_params = litellm_extra_params or self.litellm_extra_params
+        logger.info(f"Attempting to generate code using model: {effective_model_name}, output_format: {output_format}")
         
+        if output_format == "diff":
+            prompt += _DIFF_FORMAT_INSTRUCTIONS
+
         logger.debug(f"Received prompt for code generation (format: {output_format}):\n--PROMPT START--\n{prompt}\n--PROMPT END--")
         
         current_generation_config = self.generation_config.copy()
@@ -303,23 +310,182 @@ Make sure your diff can be applied correctly!
         if output_format == "diff":
             if not parent_code_for_diff:
                 logger.error("Output format is 'diff' but no parent_code_for_diff provided. Returning raw diff.")
-                return generated_output 
-            
-            if not generated_output.strip():
-                 logger.info("Generated diff is empty. Returning parent code.")
-                 return parent_code_for_diff
-
-            try:
-                logger.info("Applying generated diff to parent code.")
-                modified_code = self._apply_diff(parent_code_for_diff, generated_output)
-                return modified_code
-            except Exception as e:
-                logger.error(f"Error applying diff: {e}. Returning raw diff text.", exc_info=True)
                 return generated_output
-        else:         
+            return self.finalize_diff_output(parent_code_for_diff, generated_output)
+        else:
             return generated_output
 
-                                                 
+    def finalize_diff_output(self, parent_code: str, generated_diff: str) -> str:
+        """
+        Applies a raw diff (as returned by generate_code/generate_code_batch with
+        output_format='diff') to parent_code, mirroring the behavior of execute().
+        Useful when the diff text was obtained out-of-band, e.g. via the batch API.
+        """
+        if not generated_diff.strip():
+            logger.info("Generated diff is empty. Returning parent code.")
+            return parent_code
+
+        try:
+            logger.info("Applying generated diff to parent code.")
+            return self._apply_diff(parent_code, generated_diff)
+        except Exception as e:
+            logger.error(f"Error applying diff: {e}. Returning raw diff text.", exc_info=True)
+            return generated_diff
+
+    @staticmethod
+    def is_anthropic_model(model_name: Optional[str]) -> bool:
+        """Whether model_name refers to a Claude model reachable via the Anthropic API directly."""
+        if not model_name:
+            return False
+        name = model_name.lower()
+        if name.startswith("anthropic/"):
+            name = name[len("anthropic/"):]
+        return name.startswith("claude")
+
+    @staticmethod
+    def _strip_anthropic_prefix(model_name: str) -> str:
+        return model_name[len("anthropic/"):] if model_name.lower().startswith("anthropic/") else model_name
+
+    def _resolve_max_tokens(self) -> int:
+        try:
+            return int(settings.LITELLM_MAX_TOKENS)
+        except (TypeError, ValueError):
+            return 4096
+
+    async def generate_code_batch(self, requests: List[Dict[str, Any]]) -> Dict[str, str]:
+        """
+        Generate code/diffs for many prompts at once.
+
+        Each item in `requests` is a dict with keys: `custom_id` (unique string),
+        `prompt`, and optionally `model_name`, `temperature`, `output_format`
+        (defaults mirror generate_code's defaults).
+
+        When settings.USE_ANTHROPIC_BATCH_API is enabled, requests targeting Claude
+        models are submitted together via the Anthropic Messages Batches API (cheaper,
+        but can take a while to complete). All other requests - and all requests when
+        the setting is disabled - run as concurrent individual calls, same as before.
+
+        Returns a dict mapping custom_id -> generated text (cleaned the same way
+        generate_code would clean it for the given output_format).
+        """
+        if not requests:
+            return {}
+
+        use_batch_api = settings.USE_ANTHROPIC_BATCH_API
+        batchable = [r for r in requests if use_batch_api and self.is_anthropic_model(r.get("model_name") or self.model_name)]
+        batchable_ids = {r["custom_id"] for r in batchable}
+        individual = [r for r in requests if r["custom_id"] not in batchable_ids]
+
+        results: Dict[str, str] = {}
+        if individual:
+            results.update(await self._generate_individually(individual))
+        if batchable:
+            results.update(await self._generate_via_anthropic_batch(batchable))
+
+        return results
+
+    async def _generate_individually(self, requests: List[Dict[str, Any]]) -> Dict[str, str]:
+        custom_ids = [r["custom_id"] for r in requests]
+        coros = [
+            self.generate_code(
+                prompt=r["prompt"],
+                model_name=r.get("model_name"),
+                temperature=r.get("temperature"),
+                output_format=r.get("output_format", "code"),
+            )
+            for r in requests
+        ]
+        gathered = await asyncio.gather(*coros, return_exceptions=True)
+
+        results: Dict[str, str] = {}
+        for custom_id, outcome in zip(custom_ids, gathered):
+            if isinstance(outcome, Exception):
+                logger.error(f"Code generation failed for request '{custom_id}': {outcome}", exc_info=outcome)
+                results[custom_id] = ""
+            else:
+                results[custom_id] = outcome
+        return results
+
+    async def _generate_via_anthropic_batch(self, requests: List[Dict[str, Any]]) -> Dict[str, str]:
+        if anthropic is None:
+            logger.error("anthropic package is not installed; cannot use the Anthropic Batches API. Falling back to individual calls.")
+            return await self._generate_individually(requests)
+
+        output_formats = {r["custom_id"]: r.get("output_format", "code") for r in requests}
+        max_tokens = self._resolve_max_tokens()
+
+        batch_requests = []
+        for r in requests:
+            prompt = r["prompt"]
+            output_format = output_formats[r["custom_id"]]
+            if output_format == "diff":
+                prompt += _DIFF_FORMAT_INSTRUCTIONS
+
+            params: Dict[str, Any] = {
+                "model": self._strip_anthropic_prefix(r.get("model_name") or self.model_name),
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            temperature = r.get("temperature")
+            if temperature is not None:
+                params["temperature"] = temperature
+
+            batch_requests.append({"custom_id": r["custom_id"], "params": params})
+
+        client = anthropic.AsyncAnthropic()
+        try:
+            batch = await client.messages.batches.create(requests=batch_requests)
+        except Exception as e:
+            logger.error(f"Failed to create Anthropic message batch: {e}. Falling back to individual calls.", exc_info=True)
+            return await self._generate_individually(requests)
+
+        logger.info(f"Created Anthropic message batch {batch.id} with {len(batch_requests)} requests.")
+
+        poll_interval = settings.BATCH_POLL_INTERVAL_SECONDS
+        max_wait = settings.BATCH_MAX_WAIT_SECONDS
+        elapsed = 0
+        while batch.processing_status != "ended":
+            if elapsed >= max_wait:
+                logger.error(
+                    f"Anthropic message batch {batch.id} did not finish within {max_wait}s "
+                    f"(status: {batch.processing_status}). Falling back to individual calls."
+                )
+                return await self._generate_individually(requests)
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+            batch = await client.messages.batches.retrieve(batch.id)
+            logger.debug(f"Anthropic message batch {batch.id} status: {batch.processing_status} ({batch.request_counts})")
+
+        logger.info(f"Anthropic message batch {batch.id} finished. Request counts: {batch.request_counts}")
+
+        results: Dict[str, str] = {}
+        try:
+            response_stream = await client.messages.batches.results(batch.id)
+            async for entry in response_stream:
+                custom_id = entry.custom_id
+                result = entry.result
+                if result.type == "succeeded":
+                    text = "".join(
+                        block.text for block in result.message.content if getattr(block, "type", None) == "text"
+                    )
+                    if output_formats.get(custom_id, "code") == "code":
+                        text = self._clean_llm_output(text)
+                    results[custom_id] = text
+                else:
+                    logger.warning(f"Anthropic batch request '{custom_id}' did not succeed: {result.type}")
+                    results[custom_id] = ""
+        except Exception as e:
+            logger.error(f"Error retrieving Anthropic batch {batch.id} results: {e}", exc_info=True)
+
+        missing = [r["custom_id"] for r in requests if r["custom_id"] not in results]
+        if missing:
+            logger.warning(f"No batch result returned for custom_ids: {missing}")
+            for custom_id in missing:
+                results[custom_id] = ""
+
+        return results
+
+
 if __name__ == '__main__':
     import asyncio
     logging.basicConfig(level=logging.DEBUG)

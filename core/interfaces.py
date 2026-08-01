@@ -65,6 +65,11 @@ class CodeGeneratorInterface(BaseAgent):
     async def generate_code(self, prompt: str, model_name: Optional[str] = None, temperature: Optional[float] = 0.7, output_format: str = "code") -> str:
         pass
 
+    @abstractmethod
+    async def generate_code_batch(self, requests: List[Dict[str, Any]]) -> Dict[str, str]:
+        """Generate code/diffs for multiple requests, using a provider batch API where possible."""
+        pass
+
 class EvaluatorAgentInterface(BaseAgent):
     @abstractmethod
     async def evaluate_program(self, program: Program, task: TaskDefinition) -> Program:

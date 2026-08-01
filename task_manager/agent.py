@@ -1,7 +1,7 @@
 import logging
 import asyncio
 import uuid
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 from core.interfaces import (
     TaskManagerInterface, TaskDefinition, Program, BaseAgent,
@@ -41,20 +41,29 @@ class TaskManagerAgent(TaskManagerInterface):
     async def initialize_population(self) -> List[Program]:
         logger.info(f"Initializing population for task: {self.task_definition.id}")
         initial_population = []
-        
+
         initial_model = settings.LLM_SECONDARY_MODEL # Use secondary for broad initial generation
         logger.info(f"Using model '{initial_model}' for initial population generation.")
 
-        # Generate initial programs
-        tasks = []
+        # Generate initial programs. When USE_ANTHROPIC_BATCH_API is enabled and
+        # initial_model is a Claude model, this is submitted as a single Anthropic
+        # Messages Batch; otherwise it runs as concurrent individual calls as before.
+        requests = []
         for i in range(self.population_size):
             initial_prompt = self.prompt_designer.design_initial_prompt()
-            tasks.append(self.code_generator.generate_code(initial_prompt, model_name=initial_model, temperature=0.8))
+            requests.append({
+                "custom_id": f"{self.task_definition.id}_gen0_prog{i}",
+                "prompt": initial_prompt,
+                "model_name": initial_model,
+                "temperature": 0.8,
+                "output_format": "code",
+            })
 
-        generated_codes = await asyncio.gather(*tasks)
-        for i, generated_code in enumerate(generated_codes):
-            program_id = f"{self.task_definition.id}_gen0_prog{i}"
-            logger.debug(f"Generated initial program {i+1}/{self.population_size} with id {program_id}")
+        generated_codes = await self.code_generator.generate_code_batch(requests)
+        for request in requests:
+            program_id = request["custom_id"]
+            generated_code = generated_codes.get(program_id, "")
+            logger.debug(f"Generated initial program {program_id}")
             program = Program(
                 id=program_id,
                 code=generated_code,
@@ -106,24 +115,33 @@ class TaskManagerAgent(TaskManagerInterface):
                 break
             logger.info(f"Generation {gen}: Selected {len(parents)} parents.")
 
-            # Generate offspring
+            # Generate offspring. Requests for the whole generation are gathered up front so
+            # they can be submitted together via generate_code_batch (real Anthropic batch
+            # for Claude models when enabled, concurrent individual calls otherwise).
             offspring_population = []
             num_offspring_per_parent = (self.population_size + len(parents) - 1) // len(parents)
-            
-            generation_tasks = []
+
+            offspring_requests = []
+            offspring_context: Dict[str, Tuple[Program, str]] = {}  # custom_id -> (parent, prompt_type)
             for i, parent in enumerate(parents):
                 for j in range(num_offspring_per_parent):
                     child_id = f"{self.task_definition.id}_gen{gen}_child{i}_{j}"
-                    generation_tasks.append(self.generate_offspring(parent, gen, child_id))
-            
-            generated_offspring_results = await asyncio.gather(*generation_tasks, return_exceptions=True)
+                    request, prompt_type = self._design_offspring_request(parent, gen, child_id)
+                    offspring_requests.append(request)
+                    offspring_context[child_id] = (parent, prompt_type)
 
-            for result in generated_offspring_results:
-                if isinstance(result, Exception):
-                    logger.error(f"Error generating offspring: {result}", exc_info=result)
-                elif result:
-                    offspring_population.append(result)
-                    await self.database.save_program(result)
+            raw_diffs = await self.code_generator.generate_code_batch(offspring_requests)
+
+            for child_id, (parent, prompt_type) in offspring_context.items():
+                try:
+                    generated_code = self.code_generator.finalize_diff_output(parent.code, raw_diffs.get(child_id, ""))
+                    offspring = self._build_offspring_program(parent, child_id, gen, generated_code, prompt_type)
+                except Exception as e:
+                    logger.error(f"Error generating offspring {child_id}: {e}", exc_info=True)
+                    offspring = None
+                if offspring:
+                    offspring_population.append(offspring)
+                    await self.database.save_program(offspring)
 
             logger.info(f"Generation {gen}: Generated {len(offspring_population)} offspring.")
             if not offspring_population:
@@ -158,19 +176,18 @@ class TaskManagerAgent(TaskManagerInterface):
             logger.info("No best program found at the end of evolution.")
         return final_best
 
-    async def generate_offspring(self, parent: Program, generation_num: int, child_id: str) -> Optional[Program]:
-        logger.debug(f"Generating offspring from parent {parent.id} for generation {generation_num}")
-        
+    def _design_offspring_request(self, parent: Program, generation_num: int, child_id: str) -> Tuple[Dict[str, Any], str]:
+        """Decide the model/prompt for one offspring and build its generate_code_batch request."""
         prompt_type = "mutation"
         # Default to primary for bug fixes or high-fitness mutations
-        chosen_model = settings.LLM_PRIMARY_MODEL 
+        chosen_model = settings.LLM_PRIMARY_MODEL
 
         if parent.errors and parent.fitness_scores.get("correctness", 1.0) < settings.BUG_FIX_CORRECTNESS_THRESHOLD:
             primary_error = parent.errors[0]
             execution_details = None
             if len(parent.errors) > 1 and isinstance(parent.errors[1], str) and ("stdout" in parent.errors[1].lower() or "stderr" in parent.errors[1].lower()):
                 execution_details = parent.errors[1]
-            
+
             mutation_prompt = self.prompt_designer.design_bug_fix_prompt(
                 program=parent,
                 error_message=primary_error,
@@ -197,27 +214,30 @@ class TaskManagerAgent(TaskManagerInterface):
 
             mutation_prompt = self.prompt_designer.design_mutation_prompt(program=parent, evaluation_feedback=feedback)
             logger.info(f"Attempting mutation for parent {parent.id} using diff. Model: {chosen_model}")
-        
-        generated_code = await self.code_generator.execute(
-            prompt=mutation_prompt,
-            model_name=chosen_model,
-            temperature=0.75,
-            output_format="diff",
-            parent_code_for_diff=parent.code
-        )
 
+        request = {
+            "custom_id": child_id,
+            "prompt": mutation_prompt,
+            "model_name": chosen_model,
+            "temperature": 0.75,
+            "output_format": "diff",
+        }
+        return request, prompt_type
+
+    def _build_offspring_program(self, parent: Program, child_id: str, generation_num: int, generated_code: str, prompt_type: str) -> Optional[Program]:
+        """Validate a generated (post diff-application) code string and wrap it as a Program."""
         if not generated_code.strip():
             logger.warning(f"Offspring generation for parent {parent.id} ({prompt_type}) resulted in empty code/diff. Skipping.")
             return None
-        
+
         if generated_code == parent.code:
             logger.warning(f"Offspring generation for parent {parent.id} ({prompt_type}) using diff resulted in no change to the code. Skipping.")
             return None
-        
+
         if "<<<<<<< SEARCH" in generated_code and "=======" in generated_code and ">>>>>>> REPLACE" in generated_code:
             logger.warning(f"Offspring generation for parent {parent.id} ({prompt_type}) seems to have returned raw diff. LLM or diff application may have failed. Skipping. Content:\n{generated_code[:500]}")
             return None
-        
+
         if "# Error:" in generated_code[:100]:
             logger.warning(f"Failed to generate valid code for offspring of {parent.id} ({prompt_type}). LLM Output indicates error: {generated_code[:200]}")
             return None
@@ -232,6 +252,21 @@ class TaskManagerAgent(TaskManagerInterface):
         )
         logger.info(f"Successfully generated offspring {offspring.id} from parent {parent.id} ({prompt_type}).")
         return offspring
+
+    async def generate_offspring(self, parent: Program, generation_num: int, child_id: str) -> Optional[Program]:
+        """Generate a single offspring with one direct LLM call (no batching)."""
+        logger.debug(f"Generating offspring from parent {parent.id} for generation {generation_num}")
+        request, prompt_type = self._design_offspring_request(parent, generation_num, child_id)
+
+        generated_code = await self.code_generator.execute(
+            prompt=request["prompt"],
+            model_name=request["model_name"],
+            temperature=request["temperature"],
+            output_format="diff",
+            parent_code_for_diff=parent.code
+        )
+
+        return self._build_offspring_program(parent, child_id, generation_num, generated_code, prompt_type)
 
     async def execute(self) -> Any:
         return await self.manage_evolutionary_cycle()
