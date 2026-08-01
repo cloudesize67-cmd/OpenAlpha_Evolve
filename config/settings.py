@@ -33,8 +33,8 @@ LLM_SECONDARY_MODEL = os.getenv("LLM_SECONDARY_MODEL", FLASH_MODEL if FLASH_MODE
 #     PRO_API_KEY = "Your API key"
 
 # Evolutionary Algorithm Settings
-POPULATION_SIZE = 5
-GENERATIONS = 2
+POPULATION_SIZE = int(os.getenv("POPULATION_SIZE", "5"))
+GENERATIONS = int(os.getenv("GENERATIONS", "2"))
 # Threshold for switching to bug-fix prompt
 # If a program has errors and its correctness score is below this, a bug-fix prompt will be used.
 BUG_FIX_CORRECTNESS_THRESHOLD = float(os.getenv("BUG_FIX_CORRECTNESS_THRESHOLD", "0.1"))
