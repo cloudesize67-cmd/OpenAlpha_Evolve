@@ -157,6 +157,15 @@ OpenAlpha_Evolve employs a modular, agent-based architecture to orchestrate an e
     ```
     Add the necessary API key variables for your chosen LLM provider(s) to your `.env` file.
 
+    #### Anthropic Message Batches API (optional)
+    If you're running with Claude models (`claude-...` or `anthropic/claude-...`), you can set
+    `USE_ANTHROPIC_BATCH_API=True` in your `.env` to submit each generation's code-generation
+    requests together via [Anthropic's Message Batches API](https://docs.anthropic.com/en/docs/build-with-claude/batch-processing)
+    instead of one call per program. This costs roughly 50% less than standard pricing, at the
+    cost of higher latency since a batch can take minutes to hours to complete. Requests for
+    non-Claude models keep running as concurrent individual calls regardless of this setting.
+    See `.env.example` for the related `BATCH_POLL_INTERVAL_SECONDS`/`BATCH_MAX_WAIT_SECONDS` knobs.
+
 6.  **Run OpenAlpha_Evolve!**
     Run the example task (Dijkstra's algorithm) with:
     ```bash

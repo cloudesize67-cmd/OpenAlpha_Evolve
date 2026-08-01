@@ -71,6 +71,19 @@ LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 API_MAX_RETRIES = 5
 API_RETRY_DELAY_SECONDS = 10
 
+# Anthropic Message Batches API (https://docs.anthropic.com/en/docs/build-with-claude/batch-processing)
+# When enabled, code-generation requests targeting Claude models (model strings starting
+# with "claude" or "anthropic/claude") are submitted together via the Messages Batches API
+# instead of one HTTP request per program. This is significantly cheaper (~50% off standard
+# pricing) but a batch can take anywhere from minutes to hours to complete, so generation
+# latency increases. Requests for non-Anthropic models are unaffected and keep running as
+# concurrent individual calls, as before.
+USE_ANTHROPIC_BATCH_API = os.getenv("USE_ANTHROPIC_BATCH_API", "False").lower() == "true"
+# How often to poll batch status while waiting for it to finish.
+BATCH_POLL_INTERVAL_SECONDS = int(os.getenv("BATCH_POLL_INTERVAL_SECONDS", "10"))
+# Give up waiting on a batch (falling back to individual calls) after this long.
+BATCH_MAX_WAIT_SECONDS = int(os.getenv("BATCH_MAX_WAIT_SECONDS", "3600"))
+
 RL_TRAINING_INTERVAL_GENERATIONS = 50
 RL_MODEL_PATH = "rl_finetuner_model.pth"
 
