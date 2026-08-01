@@ -3,14 +3,35 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# LLM Configuration
+# -----------------------------------------------------------------------------
+# Multi-provider LLM Configuration
+# -----------------------------------------------------------------------------
+# OpenAlpha_Evolve uses three strategic model roles for the recursive learning
+# loop. Each role can point to a different provider/model via LiteLLM strings.
+# Set the model name, optional base_url, and optional api_key override below.
+# If a role's API_KEY is omitted, LiteLLM falls back to its provider-standard
+# env var (e.g. ANTHROPIC_API_KEY, MOONSHOT_API_KEY, GEMINI_API_KEY).
+# -----------------------------------------------------------------------------
+
+# --- Claude Sonnet 5 (Anthropic) ---
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "anthropic/claude-sonnet-5")
+CLAUDE_BASE_URL = os.getenv("CLAUDE_BASE_URL", None)
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", os.getenv("ANTHROPIC_API_KEY"))
+
+# --- Kimi K3 (Moonshot AI) ---
+KIMI_MODEL = os.getenv("KIMI_MODEL", "moonshot/kimi-k3")
+KIMI_BASE_URL = os.getenv("KIMI_BASE_URL", None)
+KIMI_API_KEY = os.getenv("KIMI_API_KEY", os.getenv("MOONSHOT_API_KEY"))
+
+# --- Gemini 3.1 Pro (Google) ---
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini/gemini-3.1-pro-preview")
+GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL", None)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY"))
+
+# Legacy flash/pro model variables kept for backward compatibility
 FLASH_API_KEY = os.getenv("FLASH_API_KEY")
 FLASH_BASE_URL = os.getenv("FLASH_BASE_URL", None)
 FLASH_MODEL = os.getenv("FLASH_MODEL")
-
-# PRO_API_KEY = os.getenv("PRO_API_KEY")
-# PRO_BASE_URL = os.getenv("PRO_BASE_URL", None)
-# PRO_MODEL = os.getenv("PRO_MODEL")
 
 EVALUATION_API_KEY = os.getenv("EVALUATION_API_KEY")
 EVALUATION_BASE_URL = os.getenv("EVALUATION_BASE_URL", None)
@@ -25,12 +46,13 @@ LITELLM_TOP_P = os.getenv("LITELLM_TOP_P")
 LITELLM_TOP_K = os.getenv("LITELLM_TOP_K")
 
 # Specific model names for strategic use (can be same as LITELLM_DEFAULT_MODEL if only one is used)
-LLM_PRIMARY_MODEL = os.getenv("LLM_PRIMARY_MODEL", LITELLM_DEFAULT_MODEL)
-LLM_SECONDARY_MODEL = os.getenv("LLM_SECONDARY_MODEL", FLASH_MODEL if FLASH_MODEL else LLM_PRIMARY_MODEL)
+LLM_PRIMARY_MODEL = os.getenv("LLM_PRIMARY_MODEL", GEMINI_MODEL if GEMINI_MODEL else LITELLM_DEFAULT_MODEL)
+LLM_SECONDARY_MODEL = os.getenv("LLM_SECONDARY_MODEL", KIMI_MODEL if KIMI_MODEL else LLM_PRIMARY_MODEL)
 
-# if not PRO_API_KEY:
-#     print("Warning: PRO_API_KEY not found in .env or environment. Using a NON-FUNCTIONAL placeholder. Please create a .env file with your valid API key.")
-#     PRO_API_KEY = "Your API key"
+# Enable automatic model cycling across the three providers for mutation tasks.
+# When True, the TaskManager rotates between Claude, Kimi, and Gemini each
+# generation, increasing diversity and robustness of the evolutionary loop.
+ENABLE_MODEL_CYCLING = os.getenv("ENABLE_MODEL_CYCLING", "True").lower() == "true"
 
 # Evolutionary Algorithm Settings
 POPULATION_SIZE = 5
@@ -88,12 +110,42 @@ def get_llm_model(model_type="default"):
     if model_type == "default":
         return LITELLM_DEFAULT_MODEL
     elif model_type == "flash":
-        # Assuming FLASH_MODEL might still be a specific, different model.
-        # If FLASH_MODEL is also meant to be covered by litellm's general handling,
-        # this could also return LITELLM_DEFAULT_MODEL or a specific flash model string.
-        # For now, keep FLASH_MODEL if it's distinct.
-        return FLASH_MODEL if FLASH_MODEL else LITELLM_DEFAULT_MODEL # Return default if FLASH_MODEL is not set
+        return FLASH_MODEL if FLASH_MODEL else LITELLM_DEFAULT_MODEL
+    elif model_type == "claude":
+        return CLAUDE_MODEL if CLAUDE_MODEL else LITELLM_DEFAULT_MODEL
+    elif model_type == "kimi":
+        return KIMI_MODEL if KIMI_MODEL else LITELLM_DEFAULT_MODEL
+    elif model_type == "gemini":
+        return GEMINI_MODEL if GEMINI_MODEL else LITELLM_DEFAULT_MODEL
     # Fallback for any other model_type not explicitly handled
     return LITELLM_DEFAULT_MODEL
+
+
+def get_model_extra_params(model_name: str) -> dict:
+    """
+    Return provider-specific extra parameters (api_key, base_url) for a given
+    LiteLLM model string. This allows each role to authenticate against its
+    own provider even when multiple providers are used simultaneously.
+    """
+    extra = {}
+    model_lower = (model_name or "").lower()
+
+    if model_lower.startswith("anthropic/") or "claude" in model_lower:
+        if CLAUDE_API_KEY:
+            extra["api_key"] = CLAUDE_API_KEY
+        if CLAUDE_BASE_URL:
+            extra["base_url"] = CLAUDE_BASE_URL
+    elif model_lower.startswith("moonshot/") or "kimi" in model_lower:
+        if KIMI_API_KEY:
+            extra["api_key"] = KIMI_API_KEY
+        if KIMI_BASE_URL:
+            extra["base_url"] = KIMI_BASE_URL
+    elif model_lower.startswith("gemini/") or model_lower.startswith("vertex_ai/"):
+        if GEMINI_API_KEY:
+            extra["api_key"] = GEMINI_API_KEY
+        if GEMINI_BASE_URL:
+            extra["base_url"] = GEMINI_BASE_URL
+
+    return extra
 
                                  
