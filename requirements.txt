@@ -41,6 +41,7 @@ pytest
 
 # Utilities
 # jinja2
+lxml  # format-preserving XML for the .docx processing pipeline (scripts/merge_runs.py, scripts/office/validate.py)
 
 # API/Web (Optional, if exposing functionality)
 # fastapi
