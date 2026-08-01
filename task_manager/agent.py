@@ -19,17 +19,22 @@ from selection_controller.agent import SelectionControllerAgent
 logger = logging.getLogger(__name__)
 
 class TaskManagerAgent(TaskManagerInterface):
+    """
+    Orchestrates the evolutionary loop. Supports a triple-provider strategy by
+    cycling across Claude, Kimi, and Gemini when ENABLE_MODEL_CYCLING is set.
+    """
+
     def __init__(self, task_definition: TaskDefinition, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
         self.task_definition = task_definition
         self.prompt_designer: PromptDesignerInterface = PromptDesignerAgent(task_definition=self.task_definition)
         self.code_generator: CodeGeneratorInterface = CodeGeneratorAgent()
         self.evaluator: EvaluatorAgentInterface = EvaluatorAgent(task_definition=self.task_definition)
-        
+
         # Simplified database initialization:
         self.database: DatabaseAgentInterface = InMemoryDatabaseAgent()
         logger.info(f"Using {settings.DATABASE_TYPE} database (InMemoryDatabaseAgent).")
-            
+
         self.selection_controller: SelectionControllerInterface = SelectionControllerAgent()
 
         self.population_size = settings.POPULATION_SIZE
@@ -38,18 +43,56 @@ class TaskManagerAgent(TaskManagerInterface):
         self.num_islands = settings.NUM_ISLANDS
         self.programs_per_island = self.population_size // self.num_islands
 
+        # Ordered provider list used for model cycling. Each generation prefers
+        # the next model in the list to diversify the evolutionary search.
+        self._model_cycle = [
+            settings.CLAUDE_MODEL,
+            settings.KIMI_MODEL,
+            settings.GEMINI_MODEL,
+        ]
+        self._model_cycle_index = 0
+
+    def _select_generation_model(self, generation_num: int, role: str = "secondary") -> str:
+        """
+        Pick the model to use for a given generation/role.
+
+        If ENABLE_MODEL_CYCLING is on, the secondary/exploration role rotates
+        across Claude, Kimi, and Gemini each generation. The primary/refinement
+        role also cycles, but offset so high-fitness programs see a different
+        provider than the current explorer.
+        """
+        if not settings.ENABLE_MODEL_CYCLING:
+            if role == "primary":
+                return settings.LLM_PRIMARY_MODEL
+            return settings.LLM_SECONDARY_MODEL
+
+        cycle = [m for m in self._model_cycle if m]
+        if not cycle:
+            return settings.LLM_PRIMARY_MODEL
+
+        if role == "primary":
+            idx = (generation_num + 1) % len(cycle)
+        else:
+            idx = generation_num % len(cycle)
+        return cycle[idx]
+
     async def initialize_population(self) -> List[Program]:
         logger.info(f"Initializing population for task: {self.task_definition.id}")
         initial_population = []
-        
-        initial_model = settings.LLM_SECONDARY_MODEL # Use secondary for broad initial generation
-        logger.info(f"Using model '{initial_model}' for initial population generation.")
+
+        # When model cycling is enabled, seed each initial program with a
+        # different provider to maximise diversity of the starting population.
+        cycle = [m for m in self._model_cycle if m]
+        use_cycle = settings.ENABLE_MODEL_CYCLING and len(cycle) > 1
+        base_model = settings.LLM_SECONDARY_MODEL  # Use secondary for broad initial generation
+        logger.info(f"Base model for initial population generation: '{base_model}'. Cycling enabled: {use_cycle}")
 
         # Generate initial programs
         tasks = []
         for i in range(self.population_size):
             initial_prompt = self.prompt_designer.design_initial_prompt()
-            tasks.append(self.code_generator.generate_code(initial_prompt, model_name=initial_model, temperature=0.8))
+            model_name = cycle[i % len(cycle)] if use_cycle else base_model
+            tasks.append(self.code_generator.generate_code(initial_prompt, model_name=model_name, temperature=0.8))
 
         generated_codes = await asyncio.gather(*tasks)
         for i, generated_code in enumerate(generated_codes):
@@ -66,7 +109,7 @@ class TaskManagerAgent(TaskManagerInterface):
 
         # Initialize islands with the initial population
         self.selection_controller.initialize_islands(initial_programs=initial_population)
-        
+
         logger.info(f"Initialized population with {len(initial_population)} programs across {self.num_islands} islands.")
         return initial_population
 
@@ -109,13 +152,29 @@ class TaskManagerAgent(TaskManagerInterface):
             # Generate offspring
             offspring_population = []
             num_offspring_per_parent = (self.population_size + len(parents) - 1) // len(parents)
-            
+
+            # Generation-specific models when cycling is enabled.
+            generation_secondary_model = self._select_generation_model(gen, role="secondary")
+            generation_primary_model = self._select_generation_model(gen, role="primary")
+            logger.info(
+                f"Generation {gen}: model cycling secondary='{generation_secondary_model}', "
+                f"primary='{generation_primary_model}'"
+            )
+
             generation_tasks = []
             for i, parent in enumerate(parents):
                 for j in range(num_offspring_per_parent):
                     child_id = f"{self.task_definition.id}_gen{gen}_child{i}_{j}"
-                    generation_tasks.append(self.generate_offspring(parent, gen, child_id))
-            
+                    generation_tasks.append(
+                        self.generate_offspring(
+                            parent,
+                            gen,
+                            child_id,
+                            secondary_model=generation_secondary_model,
+                            primary_model=generation_primary_model,
+                        )
+                    )
+
             generated_offspring_results = await asyncio.gather(*generation_tasks, return_exceptions=True)
 
             for result in generated_offspring_results:
@@ -158,19 +217,26 @@ class TaskManagerAgent(TaskManagerInterface):
             logger.info("No best program found at the end of evolution.")
         return final_best
 
-    async def generate_offspring(self, parent: Program, generation_num: int, child_id: str) -> Optional[Program]:
+    async def generate_offspring(
+        self,
+        parent: Program,
+        generation_num: int,
+        child_id: str,
+        secondary_model: Optional[str] = None,
+        primary_model: Optional[str] = None,
+    ) -> Optional[Program]:
         logger.debug(f"Generating offspring from parent {parent.id} for generation {generation_num}")
-        
+
         prompt_type = "mutation"
         # Default to primary for bug fixes or high-fitness mutations
-        chosen_model = settings.LLM_PRIMARY_MODEL 
+        chosen_model = primary_model if primary_model else settings.LLM_PRIMARY_MODEL
 
         if parent.errors and parent.fitness_scores.get("correctness", 1.0) < settings.BUG_FIX_CORRECTNESS_THRESHOLD:
             primary_error = parent.errors[0]
             execution_details = None
             if len(parent.errors) > 1 and isinstance(parent.errors[1], str) and ("stdout" in parent.errors[1].lower() or "stderr" in parent.errors[1].lower()):
                 execution_details = parent.errors[1]
-            
+
             mutation_prompt = self.prompt_designer.design_bug_fix_prompt(
                 program=parent,
                 error_message=primary_error,
@@ -178,14 +244,13 @@ class TaskManagerAgent(TaskManagerInterface):
             )
             logger.info(f"Attempting bug fix for parent {parent.id} using diff. Model: {chosen_model}. Error: {primary_error}")
             prompt_type = "bug_fix"
-            # chosen_model remains LLM_PRIMARY_MODEL for bug fixing
+            # chosen_model remains the primary model for bug fixing
         else:
             # Decide model for mutation based on parent fitness
             if parent.fitness_scores.get("correctness", 0.0) >= settings.HIGH_FITNESS_THRESHOLD_FOR_PRIMARY_LLM:
-                # chosen_model is already LLM_PRIMARY_MODEL
                 logger.info(f"Parent {parent.id} has high fitness, using primary model {chosen_model} for mutation.")
             else:
-                chosen_model = settings.LLM_SECONDARY_MODEL # Use secondary for lower-fitness mutations
+                chosen_model = secondary_model if secondary_model else settings.LLM_SECONDARY_MODEL
                 logger.info(f"Parent {parent.id} has lower fitness, using secondary model {chosen_model} for mutation.")
 
             feedback = {
@@ -197,8 +262,8 @@ class TaskManagerAgent(TaskManagerInterface):
 
             mutation_prompt = self.prompt_designer.design_mutation_prompt(program=parent, evaluation_feedback=feedback)
             logger.info(f"Attempting mutation for parent {parent.id} using diff. Model: {chosen_model}")
-        
-        generated_code = await self.code_generator.execute(
+
+        generated_code = await self._generate_with_fallback(
             prompt=mutation_prompt,
             model_name=chosen_model,
             temperature=0.75,
@@ -232,6 +297,42 @@ class TaskManagerAgent(TaskManagerInterface):
         )
         logger.info(f"Successfully generated offspring {offspring.id} from parent {parent.id} ({prompt_type}).")
         return offspring
+
+    async def _generate_with_fallback(
+        self,
+        prompt: str,
+        model_name: str,
+        temperature: float,
+        output_format: str,
+        parent_code_for_diff: Optional[str] = None
+    ) -> str:
+        """
+        Generate code/diff from the chosen model, falling back to the other
+        configured providers if the first attempt raises an error. This makes
+        the recursive loop robust against a single provider being unavailable.
+        """
+        fallback_models = [m for m in self._model_cycle if m and m != model_name]
+        candidates = [model_name] + fallback_models
+
+        last_error = None
+        for candidate in candidates:
+            try:
+                logger.info(f"Generating with model '{candidate}' (fallback chain: {candidates})")
+                return await self.code_generator.execute(
+                    prompt=prompt,
+                    model_name=candidate,
+                    temperature=temperature,
+                    output_format=output_format,
+                    parent_code_for_diff=parent_code_for_diff,
+                )
+            except Exception as e:
+                logger.warning(f"Model '{candidate}' generation failed: {type(e).__name__} - {e}")
+                last_error = e
+
+        logger.error(f"All model candidates failed for generation: {candidates}")
+        if last_error:
+            raise last_error
+        return ""
 
     async def execute(self) -> Any:
         return await self.manage_evolutionary_cycle()
