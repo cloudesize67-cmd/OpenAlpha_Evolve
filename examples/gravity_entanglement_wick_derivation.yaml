@@ -189,3 +189,89 @@ tests:
               if int(rank) <= 1:
                   return True
               return f"Full-sum construction must have rank <= 1 (exact outer product), got rank={rank}"
+
+  - description: "Full-sum construction carries ZERO entanglement entropy (zero bits of shared information between the objects)"
+    name: "full_sum_zero_entanglement_entropy"
+    test_cases:
+      - input: ["full_sum"]
+        validation_func: |
+          def validate(matrix):
+              import sympy as sp
+              # Read beta_ij as the amplitude matrix of the bipartite pure state
+              # sum_ij beta_ij |i>_1 |j>_2; the entanglement of the two objects is
+              # the von Neumann entropy of rho_1 = beta beta^dagger / Tr(...).
+              # S == 0 bits <=> rank(beta) <= 1 <=> separable product state.
+              if not isinstance(matrix, (list, tuple)) or len(matrix) != 2:
+                  return f"Expected a 2x2 nested list of expression strings, got {type(matrix)}"
+              for row in matrix:
+                  if not isinstance(row, (list, tuple)) or len(row) != 2:
+                      return f"Expected each row to have 2 entries, got {row!r}"
+              _syms = {n: sp.Symbol(n) for n in
+                       ("Lambda", "t", "V_LL", "V_LR", "V_RL", "V_RR")}
+              try:
+                  M = sp.Matrix([[sp.sympify(str(e), locals=_syms) for e in row]
+                                 for row in matrix])
+              except Exception as exc:
+                  return f"Could not parse entries as sympy expressions: {exc}"
+              # Distinct generic (prime) values expose generic, non-fine-tuned behaviour.
+              subs = {_syms["Lambda"]: 1, _syms["t"]: 1, _syms["V_LL"]: 2,
+                      _syms["V_LR"]: 3, _syms["V_RL"]: 5, _syms["V_RR"]: 7}
+              beta = M.subs(subs)
+              if beta.free_symbols:
+                  return f"Unexpected free symbols after substitution: {beta.free_symbols}"
+              gram = beta * beta.H
+              trace = sp.trace(gram)
+              if sp.simplify(trace) == 0:
+                  return "Zero-norm amplitude matrix has no well-defined entanglement entropy"
+              rho = gram / trace
+              S = sp.Integer(0)
+              for eig, mult in rho.eigenvals().items():
+                  mu = sp.re(eig).evalf()          # PSD => real, non-negative
+                  if mu > 1e-15:                    # 0*log0 := 0
+                      S += mult * (-mu * sp.log(mu, 2))
+              S = float(S.evalf())
+              if S < 1e-9:
+                  return True
+              return f"Full-sum construction must carry zero entanglement entropy (S == 0 bits), got S={S} bits"
+
+  - description: "Diagonal (Aziz-Howl) construction carries POSITIVE entanglement entropy (generically entangled)"
+    name: "diagonal_positive_entanglement_entropy"
+    test_cases:
+      - input: ["diagonal"]
+        validation_func: |
+          def validate(matrix):
+              import sympy as sp
+              # Same bipartite-state reading as the full-sum entropy check, but for
+              # the diagonal construction, which is generically rank 2 and so carries
+              # S > 0 bits of entanglement between the two objects.
+              if not isinstance(matrix, (list, tuple)) or len(matrix) != 2:
+                  return f"Expected a 2x2 nested list of expression strings, got {type(matrix)}"
+              for row in matrix:
+                  if not isinstance(row, (list, tuple)) or len(row) != 2:
+                      return f"Expected each row to have 2 entries, got {row!r}"
+              _syms = {n: sp.Symbol(n) for n in
+                       ("Lambda", "t", "V_LL", "V_LR", "V_RL", "V_RR")}
+              try:
+                  M = sp.Matrix([[sp.sympify(str(e), locals=_syms) for e in row]
+                                 for row in matrix])
+              except Exception as exc:
+                  return f"Could not parse entries as sympy expressions: {exc}"
+              subs = {_syms["Lambda"]: 1, _syms["t"]: 1, _syms["V_LL"]: 2,
+                      _syms["V_LR"]: 3, _syms["V_RL"]: 5, _syms["V_RR"]: 7}
+              beta = M.subs(subs)
+              if beta.free_symbols:
+                  return f"Unexpected free symbols after substitution: {beta.free_symbols}"
+              gram = beta * beta.H
+              trace = sp.trace(gram)
+              if sp.simplify(trace) == 0:
+                  return "Zero-norm amplitude matrix has no well-defined entanglement entropy"
+              rho = gram / trace
+              S = sp.Integer(0)
+              for eig, mult in rho.eigenvals().items():
+                  mu = sp.re(eig).evalf()
+                  if mu > 1e-15:
+                      S += mult * (-mu * sp.log(mu, 2))
+              S = float(S.evalf())
+              if S > 1e-6:
+                  return True
+              return f"Diagonal construction should be generically entangled (S > 0 bits), got S={S} bits"
