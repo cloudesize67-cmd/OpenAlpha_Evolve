@@ -1,13 +1,16 @@
 """Tests for the torsion-filter evaluator (examples/torsion_filter/evaluator.py).
 
-Verifies the reference fitness ladder is correctly ordered, that the seed
-program scores below the human baseline while a well-designed bandpass beats it,
-and that invalid programs are rejected rather than silently scored.
+Verifies the engineered Butterworth baseline beats a naive moving average
+("baseline >> naive MA"), that the seed program scores below the baseline while
+a well-designed bandpass beats it (on both train and held-out seeds), and that
+invalid candidates hard-fail with combined_score -100.
 
 Uses unittest to match the test style already in this repo.
 """
 import importlib.util
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -26,80 +29,83 @@ def _load(name, path):
 
 ev = _load("torsion_evaluator", _EVAL_PATH)
 
-
-class TorsionLadderTests(unittest.TestCase):
-    def test_selftest_passes(self):
-        self.assertEqual(ev.selftest(), 0)
-
-    def test_reference_ladder_ordering(self):
-        naive, _ = ev._raw_snr(ev.naive_moving_average, ev.TRAIN_SEEDS)
-        base, _ = ev._raw_snr(ev.baseline_bandpass, ev.TRAIN_SEEDS)
-        strong, _ = ev._raw_snr(ev.strong_bandpass, ev.TRAIN_SEEDS)
-        # baseline >> naive MA, and strong beats baseline
-        self.assertLess(naive, base)
-        self.assertLess(base, strong)
-        self.assertGreater(base - naive, 1.0)
-        self.assertGreater(strong - base, 0.5)
-
-    def test_signal_is_deterministic(self):
-        a1, m1 = ev._make_signal(3)
-        a2, m2 = ev._make_signal(3)
-        self.assertTrue((a1 == a2).all() and (m1 == m2).all())
-        # a different seed gives a different measurement
-        _, m3 = ev._make_signal(4)
-        self.assertFalse((m1 == m3).all())
+# A numerically stable bandpass champion (sos form) that beats the baseline.
+_CHAMP = (
+    "from scipy import signal\n"
+    "def filter_signal(x, fs):\n"
+    "    sos = signal.butter(6, [4.0, 6.0], btype='bandpass', fs=fs, output='sos')\n"
+    "    return signal.sosfiltfilt(sos, x)\n"
+)
 
 
-class TorsionScoringTests(unittest.TestCase):
+class BaselineLadderTests(unittest.TestCase):
+    def test_baseline_beats_naive_moving_average(self):
+        naive = ev.evaluate_with_seeds(ev.naive_moving_average, ev.TRAIN_SEEDS)
+        baseline = ev.evaluate_with_seeds(ev.butter_notch, ev.TRAIN_SEEDS)
+        self.assertGreater(baseline, naive)
+        self.assertGreater(baseline - naive, 1.0)  # baseline >> naive MA
+
+    def test_selftest_cli_passes(self):
+        proc = subprocess.run([sys.executable, _EVAL_PATH, "--selftest"],
+                              capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("PASS", proc.stdout)
+
+    def test_make_trial_is_deterministic(self):
+        _, c1, n1 = ev.make_trial(23)
+        _, c2, n2 = ev.make_trial(23)
+        self.assertTrue((c1 == c2).all() and (n1 == n2).all())
+        _, _, n3 = ev.make_trial(24)
+        self.assertFalse((n1 == n3).all())
+
+
+class ScoringTests(unittest.TestCase):
     def test_seed_scores_below_baseline(self):
-        result = ev.evaluate(_SEED_PATH, heldout=False)
-        self.assertTrue(result["ok"], result)
-        self.assertLess(result["score_db"], 0.0)
-        self.assertFalse(result["beats_baseline"])
+        result = ev.evaluate(_SEED_PATH)
+        self.assertNotIn("error", result)
+        self.assertLess(result["combined_score"], 0.0)
 
-    def test_seed_scores_below_baseline_on_heldout(self):
-        result = ev.evaluate(_SEED_PATH, heldout=True)
-        self.assertTrue(result["ok"], result)
-        self.assertLess(result["score_db"], 0.0)
-
-    def test_strong_bandpass_program_beats_baseline(self):
-        prog = (
-            "import numpy as np\n"
-            "def filter_signal(x, fs):\n"
-            "    x = np.asarray(x, float); numtaps = 255\n"
-            "    n = np.arange(numtaps) - (numtaps - 1) / 2\n"
-            "    fl, fh = 9.2 / (fs / 2), 15.8 / (fs / 2)\n"
-            "    h = fh * np.sinc(fh * n) - fl * np.sinc(fl * n)\n"
-            "    h *= np.blackman(numtaps)\n"
-            "    k = np.arange(numtaps)\n"
-            "    h /= np.abs(np.sum(h * np.exp(-1j * 2 * np.pi * 12.5 / fs * k)))\n"
-            "    return np.convolve(x, h, mode='same')\n")
+    def test_strong_bandpass_beats_baseline(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "champ.py")
             with open(path, "w") as fh:
-                fh.write(prog)
-            result = ev.evaluate(path, heldout=True)
-        self.assertTrue(result["ok"], result)
-        self.assertGreater(result["score_db"], 0.0)
-        self.assertTrue(result["beats_baseline"])
+                fh.write(_CHAMP)
+            result = ev.evaluate(path)
+            heldout = ev.validate_heldout(path)
+        self.assertGreater(result["combined_score"], 0.0)
+        self.assertIsNotNone(heldout)
+        self.assertGreater(heldout, 0.0)  # generalises to held-out seeds
 
-    def test_wrong_length_output_is_invalid(self):
+    def test_alternate_candidate_name_is_accepted(self):
+        # The loader also accepts apply_filter / evolve_filter / denoise.
+        prog = ("from scipy import signal\n"
+                "def denoise(x, fs):\n"
+                "    sos = signal.butter(6, [4.0, 6.0], btype='bandpass', fs=fs, output='sos')\n"
+                "    return signal.sosfiltfilt(sos, x)\n")
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "alt.py")
+            with open(path, "w") as fh:
+                fh.write(prog)
+            result = ev.evaluate(path)
+        self.assertGreater(result["combined_score"], 0.0)
+
+    def test_wrong_length_output_hard_fails(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "bad.py")
             with open(path, "w") as fh:
                 fh.write("def filter_signal(x, fs):\n    return x[:10]\n")
             result = ev.evaluate(path)
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["score_db"], float("-inf"))
+        self.assertEqual(result["combined_score"], -100.0)
+        self.assertEqual(result["error"], "invalid output")
 
-    def test_missing_function_is_invalid(self):
+    def test_missing_function_hard_fails(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "empty.py")
             with open(path, "w") as fh:
                 fh.write("x = 1\n")
             result = ev.evaluate(path)
-        self.assertFalse(result["ok"])
-        self.assertIn("load failed", result["error"])
+        self.assertEqual(result["combined_score"], -100.0)
+        self.assertIn("error", result)
 
 
 if __name__ == "__main__":

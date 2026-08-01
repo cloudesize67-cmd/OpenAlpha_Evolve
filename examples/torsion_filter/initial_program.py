@@ -2,14 +2,15 @@
 
 Implements ``filter_signal(x, fs)``: given a noisy 1-D measurement and its
 sample rate, return an array of the same length estimating the clean torsion
-signal. The evolutionary search mutates only the code between the EVOLVE-BLOCK
-markers; everything outside them is fixed scaffolding.
+signal (a 5 Hz tone). The evolutionary search mutates only the code between the
+EVOLVE-BLOCK markers; everything outside them is fixed scaffolding.
 
 This starting point is deliberately modest -- a mean-subtracting detrend
 followed by a short moving average. It removes the DC offset but leaves most of
-the low-frequency drift and out-of-band interference, so it scores *below* the
-human baseline. Improving it (a real bandpass around the science band, better
-stopband rejection, less passband distortion) is the point of the search.
+the drift, pink noise, and 60 Hz line, so it scores *below* the engineered
+Butterworth baseline (combined_score ~= -6 dB). Improving it (a real bandpass
+around 5 Hz, better rejection of the line and broadband noise, less passband
+distortion) is the point of the search.
 """
 import numpy as np
 

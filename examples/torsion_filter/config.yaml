@@ -12,25 +12,24 @@ task_id: "torsion_filter_v1"
 
 task_description: |
   Improve the digital filter filter_signal(x, fs) so it recovers a faint
-  torsion-pendulum signal (a few tones in a narrow "science band" around
-  10-15 Hz) buried in Brownian low-frequency drift, broadband white noise, and
-  out-of-band mains interference.
+  torsion-balance signal (a known 5 Hz tone) buried in broadband white noise,
+  pink (1/f) noise, 60 Hz line interference, and slow baseline drift.
 
-  Signature: filter_signal(x, fs)
+  Signature: filter_signal(x, fs)   (apply_filter / evolve_filter / denoise also accepted)
     - x:  1-D numpy array, the noisy measurement
     - fs: float, sample rate in Hz
     - returns: a 1-D numpy array the SAME length as x, estimating the clean
       signal.
 
   How you are scored (by evaluator.py, deterministically):
-    * Recovered SNR in dB = 10*log10(power(signal)/power(filtered - signal)),
-      after trimming filter transients, averaged across many noise seeds with a
-      penalty for seed-to-seed variance.
-    * A distortion penalty: on a noise-free probe your filter must return the
-      science tones unchanged -- over-smoothing or attenuating the band is
-      charged against you even if it suppresses noise.
-    * The reported fitness is RELATIVE to a competent human baseline bandpass:
-      score = your_snr - baseline_snr. A positive score beats the engineer.
+    * Band-SNR gain in dB: signal power in a narrow band around 5 Hz vs a wide
+      noise band (via Welch PSD), candidate minus raw input, across many seeds.
+    * Robust aggregate: median(gain) - 0.5*std(gain), so consistency is rewarded.
+    * A distortion penalty: losing more than 3 dB of the 5 Hz tone amplitude is
+      charged against you, even if it suppresses noise well.
+    * The reported combined_score is RELATIVE to an engineered Butterworth
+      bandpass baseline: combined_score = your_fitness - baseline_fitness.
+      A positive combined_score beats the engineer.
 
   Rules (enforced by the design of the task and by review):
     1. Do NOT read, import, or reverse-engineer evaluator.py, and do NOT
@@ -54,16 +53,16 @@ evolve_blocks:
     start_marker: "# EVOLVE-BLOCK-START filter"
     end_marker: "# EVOLVE-BLOCK-END filter"
 
-allowed_imports: ["numpy", "math"]
+allowed_imports: ["numpy", "scipy", "math"]
 
 # The real objective lives in evaluator.py; run it to score a champion:
 #   python examples/torsion_filter/evaluator.py <program.py>            # train
 #   python examples/torsion_filter/evaluator.py --heldout <program.py>  # gate
 evaluation_criteria:
   external_evaluator: "examples/torsion_filter/evaluator.py"
-  objective: "maximize recovered SNR in dB relative to the human baseline"
-  primary_metric: "score_db"
-  gate: "score_db must stay positive on the --heldout split"
+  objective: "maximize band-SNR gain relative to the engineered Butterworth baseline"
+  primary_metric: "combined_score"
+  gate: "combined_score must stay positive on the --heldout seeds"
 
 # --- Cost-disciplined model split -----------------------------------------
 # Spend cheap tokens on breadth and reserve the strong model for refining the

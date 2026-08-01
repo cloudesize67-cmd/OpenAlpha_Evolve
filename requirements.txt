@@ -5,7 +5,8 @@ PyYAML==6.0
 tiktoken
 openai
 sympy==1.14.0  # symbolic math for physics_verification/ (gie_dispute_checks, projection_analysis)
-numpy==2.4.6   # numerics for physics_verification/
+numpy==2.4.6   # numerics for physics_verification/ and examples/torsion_filter/
+scipy==1.17.1  # signal processing for examples/torsion_filter/evaluator.py (welch, butter, filtfilt)
 anthropic
 google-generativeai
 gradio
