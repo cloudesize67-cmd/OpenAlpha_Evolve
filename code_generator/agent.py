@@ -32,9 +32,22 @@ class CodeGeneratorAgent(CodeGeneratorInterface):
         }
         logger.info(f"CodeGeneratorAgent initialized with model: {self.model_name}")
 
+    def _resolve_extra_params(self, model_name: str, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Merge provider-aware extra params (base_url, api_key) with any explicit
+        overrides. This lets each model role authenticate to its own provider.
+        """
+        merged = self.litellm_extra_params.copy()
+        provider_params = settings.get_model_extra_params(model_name)
+        if provider_params:
+            merged.update(provider_params)
+        if overrides:
+            merged.update(overrides)
+        return merged
+
     async def generate_code(self, prompt: str, model_name: Optional[str] = None, temperature: Optional[float] = None, output_format: str = "code", litellm_extra_params: Optional[Dict[str, Any]] = None) -> str:
         effective_model_name = model_name if model_name else self.model_name
-        litellm_extra_params = litellm_extra_params or self.litellm_extra_params
+        litellm_extra_params = self._resolve_extra_params(effective_model_name, litellm_extra_params)
         logger.info(f"Attempting to generate code using model: {effective_model_name}, output_format: {output_format}")
         
         if output_format == "diff":
@@ -291,10 +304,12 @@ Make sure your diff can be applied correctly!
         Otherwise, it generates full code.
         """
         logger.debug(f"CodeGeneratorAgent.execute called. Output format: {output_format}")
-        
+
+        litellm_extra_params = self._resolve_extra_params(model_name or self.model_name, litellm_extra_params)
+
         generated_output = await self.generate_code(
-            prompt=prompt, 
-            model_name=model_name, 
+            prompt=prompt,
+            model_name=model_name,
             temperature=temperature,
             output_format=output_format,
             litellm_extra_params=litellm_extra_params
