@@ -4,7 +4,8 @@ python-dotenv>=1.0.0
 PyYAML==6.0
 tiktoken
 openai
-sympy
+sympy==1.14.0  # symbolic math for physics_verification/ (gie_dispute_checks, projection_analysis)
+numpy==2.4.6   # numerics for physics_verification/
 anthropic
 google-generativeai
 gradio
