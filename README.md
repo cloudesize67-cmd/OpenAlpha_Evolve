@@ -66,7 +66,8 @@ OpenAlpha_Evolve employs a modular, agent-based architecture to orchestrate an e
 
 ## 🚀 Key Features
 
-*   **LLM-Powered Code Generation**: Leverages state-of-the-art Large Language Models via LiteLLM, supporting multiple providers (OpenAI, Anthropic, Google, etc.).
+*   **LLM-Powered Code Generation**: Leverages state-of-the-art Large Language Models via LiteLLM, supporting multiple providers (OpenAI, Anthropic, Google, Moonshot, etc.).
+*   **Multi-Provider Recursive Learning Loop**: Cycles across Claude Sonnet 5, Kimi K3, and Gemini 3.1 Pro each generation, with automatic fallback if a provider fails.
 *   **Evolutionary Algorithm Core**: Implements iterative improvement through selection, LLM-driven mutation/bug-fixing using diffs, and survival.
 *   **Modular Agent Architecture**: Easily extend or replace individual components (e.g., use a different LLM, database, or evaluation strategy).
 *   **Automated Program Evaluation**: Syntax checking and functional testing against user-provided examples. Code execution is sandboxed using **Docker containers** for improved security and dependency management, with configurable timeout mechanisms.
@@ -133,29 +134,36 @@ OpenAlpha_Evolve employs a modular, agent-based architecture to orchestrate an e
         ```
 
     #### LLM Configuration
-    Google Cloud authentication (e.g., via Application Default Credentials (ADC) or service account keys pointed to by `GOOGLE_APPLICATION_CREDENTIALS`) is a supported method for using Google's LLMs.
+    OpenAlpha_Evolve now ships with a **triple-provider recursive learning loop**:
+    *   **Claude Sonnet 5** (`anthropic/claude-sonnet-5`) – deep reasoning / refinement
+    *   **Kimi K3** (`moonshot/kimi-k3`) – broad exploration
+    *   **Gemini 3.1 Pro** (`gemini/gemini-3.1-pro-preview`) – refinement / exploration
 
-    To set up your environment variables for Google Cloud, you can use one of the following methods. These should be added to your `.env` file:
+    These defaults are configured in `.env.example` and `config/settings.py`. Copy the example file and add your API keys:
 
     ```bash
-    # For Google Cloud (Vertex AI / AI Studio)
-    # Option 1: Using Application Default Credentials (ADC)
-    # Ensure you have authenticated via gcloud CLI:
-    # gcloud auth application-default login
-    # Or set the GOOGLE_APPLICATION_CREDENTIALS environment variable:
-    # GOOGLE_APPLICATION_CREDENTIALS="/path/to/your/service-account-key.json"
-
-    # Option 2: Directly using an API Key for specific Google services (e.g., Gemini API)
-    # GEMINI_API_KEY="your_gemini_api_key"
+    cp .env.example .env
     ```
 
-    This project uses LiteLLM to interface with various LLM providers. For providers other than Google Cloud (e.g., OpenAI, Anthropic, Cohere), please refer to the [LiteLLM documentation](https://docs.litellm.ai/docs/providers) for the specific environment variables required. Common examples include:
     ```bash
-    # OPENAI_API_KEY="your_openai_api_key"
-    # ANTHROPIC_API_KEY="your_anthropic_api_key"
-    # COHERE_API_KEY="your_cohere_api_key"
+    # Provider-standard keys (picked up automatically by LiteLLM)
+    ANTHROPIC_API_KEY=your_anthropic_key
+    MOONSHOT_API_KEY=your_moonshot_key
+    GEMINI_API_KEY=your_gemini_key   # or GOOGLE_API_KEY
+
+    # Optional per-role overrides
+    # CLAUDE_API_KEY=...
+    # KIMI_API_KEY=...
+    # GEMINI_API_KEY=...
+    # CLAUDE_BASE_URL=https://...
+    # KIMI_BASE_URL=https://...
+    # GEMINI_BASE_URL=https://...
     ```
-    Add the necessary API key variables for your chosen LLM provider(s) to your `.env` file.
+
+    **Model cycling** is enabled by default (`ENABLE_MODEL_CYCLING=True`). Each generation rotates the explorer/refiner roles across Claude, Kimi, and Gemini to diversify the search. If one provider is down, the loop automatically falls back to the others.
+
+    #### Legacy / Single-Provider Setup
+    If you prefer the original dual-role setup, set `ENABLE_MODEL_CYCLING=False` and configure `LLM_PRIMARY_MODEL` / `LLM_SECONDARY_MODEL` directly. Google Cloud authentication (ADC or `GOOGLE_APPLICATION_CREDENTIALS`) is also still supported for Vertex AI / AI Studio models. See the [LiteLLM documentation](https://docs.litellm.ai/docs/providers) for provider-specific variables.
 
 6.  **Run OpenAlpha_Evolve!**
     Run the example task (Dijkstra's algorithm) with:
