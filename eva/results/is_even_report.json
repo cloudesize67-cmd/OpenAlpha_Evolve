@@ -1,0 +1,51 @@
+{
+  "task": "is_even",
+  "spec": "solve(n) returns True if integer n is even, else False.",
+  "seed": 42,
+  "best_solution": "(n if 10 * n % 4 <= 9 * n * (6 * n == n + n) * n else 8) == n",
+  "reference": "n % 2 == 0",
+  "exact_match": false,
+  "verifier": {
+    "code": "(n if 10 * n % 4 <= 9 * n * (6 * n == n + n) * n else 8) == n",
+    "fitness": 0.895587,
+    "confidence": 0.8956,
+    "calibration_penalty": 0.0,
+    "adjusted_fitness": 0.895587,
+    "tests_passed": 14,
+    "tests_total": 14,
+    "checks": {
+      "runs_safely": true,
+      "within_time_budget": true,
+      "uses_input_variable": true,
+      "complexity_ok": true,
+      "generalizes_to_val": true
+    },
+    "error": null
+  },
+  "held_out": {
+    "heldout_accuracy": 1.0,
+    "heldout_inputs": [
+      100,
+      333,
+      1000000,
+      -42
+    ],
+    "heldout_preds": [
+      true,
+      false,
+      true,
+      true
+    ],
+    "heldout_expected": [
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "stats": {
+    "generations_run": 85,
+    "distinct_structures": 2699,
+    "unique_candidates": 3353
+  }
+}

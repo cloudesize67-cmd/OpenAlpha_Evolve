@@ -1,0 +1,51 @@
+{
+  "task": "sum_to_n",
+  "spec": "solve(n) returns the sum 0+1+...+n (closed form, integer n >= 0).",
+  "seed": 42,
+  "best_solution": "min(n, 6) ** 2",
+  "reference": "n * (n + 1) // 2",
+  "exact_match": false,
+  "verifier": {
+    "code": "min(n, 6) ** 2",
+    "fitness": 0.25,
+    "confidence": 0.25,
+    "calibration_penalty": 0.125,
+    "adjusted_fitness": 0.145,
+    "tests_passed": 3,
+    "tests_total": 12,
+    "checks": {
+      "runs_safely": true,
+      "within_time_budget": true,
+      "uses_input_variable": true,
+      "complexity_ok": true,
+      "generalizes_to_val": false
+    },
+    "error": null
+  },
+  "held_out": {
+    "heldout_accuracy": 0.0,
+    "heldout_inputs": [
+      50,
+      100,
+      1000,
+      2500
+    ],
+    "heldout_preds": [
+      36,
+      36,
+      36,
+      36
+    ],
+    "heldout_expected": [
+      1275,
+      5050,
+      500500,
+      3126250
+    ]
+  },
+  "stats": {
+    "generations_run": 150,
+    "distinct_structures": 4597,
+    "unique_candidates": 6122
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "task": "clamp_0_100",
+  "spec": "solve(n) clamps integer n into [0, 100].",
+  "seed": 42,
+  "best_solution": "abs(max(0, min(100, n)))",
+  "reference": "min(max(n, 0), 100)",
+  "exact_match": false,
+  "verifier": {
+    "code": "abs(max(0, min(100, n)))",
+    "fitness": 1.0,
+    "confidence": 1.0,
+    "calibration_penalty": 0.0,
+    "adjusted_fitness": 1.02,
+    "tests_passed": 20,
+    "tests_total": 20,
+    "checks": {
+      "runs_safely": true,
+      "within_time_budget": true,
+      "uses_input_variable": true,
+      "complexity_ok": true,
+      "generalizes_to_val": true
+    },
+    "error": null
+  },
+  "held_out": {
+    "heldout_accuracy": 1.0,
+    "heldout_inputs": [
+      -500,
+      1000,
+      250,
+      7
+    ],
+    "heldout_preds": [
+      0,
+      100,
+      100,
+      7
+    ],
+    "heldout_expected": [
+      0,
+      100,
+      100,
+      7
+    ]
+  },
+  "stats": {
+    "generations_run": 24,
+    "distinct_structures": 879,
+    "unique_candidates": 1066
+  }
+}
