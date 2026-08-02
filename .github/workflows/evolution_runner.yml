@@ -47,6 +47,6 @@ jobs:
         run: |
           git config user.name "eva-bot"
           git config user.email "eva-bot@users.noreply.github.com"
-          git add results/
+          git add eva/results/
           git commit -m "Evolution run $(date -u +%Y-%m-%dT%H:%M)Z" || echo "nothing new"
           git push
