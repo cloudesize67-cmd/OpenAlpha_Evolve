@@ -1,0 +1,52 @@
+# GitHub Actions — Evolution Runner
+# Save this file in your repo as:  .github/workflows/evolution_runner.yml
+# It runs the evolution harness every time you push a .py file,
+# or on demand (Actions tab -> "Evolution Runner" -> Run workflow),
+# and commits the results back into the repo under ./results/.
+
+name: Evolution Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Task name or 'all'"
+        default: "all"
+      gens:
+        description: "Generations per task"
+        default: "150"
+  push:
+    paths:
+      - "**.py"
+
+jobs:
+  evolve:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write          # lets the workflow commit results back
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Uncomment if you enable the LLM hook (set MOONSHOT_API_KEY in
+      # repo Settings -> Secrets and variables -> Actions):
+      # - run: pip install openai
+
+      - name: Run evolution harness
+        env:
+          MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+          TASK: ${{ github.event.inputs.task || 'all' }}
+          GENS: ${{ github.event.inputs.gens || '150' }}
+        run: |
+          python3 eva/phase2_code_evolution.py --task "$TASK" --gens "$GENS" --out ./eva/results
+
+      - name: Commit results back to repo
+        run: |
+          git config user.name "eva-bot"
+          git config user.email "eva-bot@users.noreply.github.com"
+          git add results/
+          git commit -m "Evolution run $(date -u +%Y-%m-%dT%H:%M)Z" || echo "nothing new"
+          git push
