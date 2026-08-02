@@ -1,0 +1,109 @@
+# Quantum-gravity entanglement-phase scaling -- v2 (blind).
+#
+# Same synthetic TOY task as quantum_gravity_scaling.yaml, with two deliberate
+# changes so the search has to *discover* the scaling rather than copy it:
+#
+#   1. The reference implementation is REMOVED from the prompt. v1 handed the
+#      LLM a full worked formula in `expert_knowledge`; here there is none, so a
+#      champion must derive the 1/r^2 vs 1/r^3 structure itself.
+#   2. The tests are SMOKE-ONLY. v1's tests anchored each output to the exact
+#      reference formula (order-of-magnitude bands recomputed from it), which
+#      leaks the answer into the fitness signal. Here the tests only check the
+#      contract (finite output, mass=0 -> ~0). The real objective -- correct
+#      scaling exponents and maximal divergence between the two regimes -- is
+#      scored out-of-band by physics_verification/grid_evaluator.py, which fits
+#      log|phase| vs log(separation) across a grid and cannot be gamed by a
+#      constant.
+#
+# As in v1: this is a synthetic benchmark inspired by physics vocabulary, NOT a
+# validated derivation of real quantum-gravity phenomenology.
+
+task_id: "quantum_gravity_entanglement_phase_scaling_v2"
+
+task_description: |
+  Evolve a Python function that models a synthetic "entanglement phase" for two
+  competing toy regimes and makes them as numerically distinguishable as
+  possible, while keeping every output physically sane (finite).
+
+  Signature: calculate_entanglement_phase(mass, separation, time, method)
+    - mass: float, kilograms, >= 0
+    - separation: float, meters, > 0
+    - time: float, seconds, > 0
+    - method: str, either "classical_qft" or "post_newtonian"
+    - returns: a single float, the synthetic phase for the requested method
+
+  The two toy regimes (qualitative behaviour you must reproduce):
+    1. "classical_qft" -- grows with mass and time and falls off with
+       separation as roughly 1/separation^2.
+    2. "post_newtonian" -- grows with mass and time and falls off MORE STEEPLY
+       with separation (roughly 1/separation^3) than classical_qft.
+
+  Goals, in priority order:
+    1. Never return NaN, +/-Inf, or a complex number for any valid input.
+    2. mass == 0 must yield (approximately) 0 phase for both methods.
+    3. Reproduce the scaling above: classical_qft ~ 1/r^2, post_newtonian ~ 1/r^3,
+       measured as the slope of log|phase| vs log(separation) across a grid.
+    4. Maximize the measurable DIVERGENCE between the two methods across the
+       grid -- i.e. how many e-folds they pull apart as separation varies. You
+       may push the post_newtonian falloff to the steep edge of the allowed
+       exponent band to widen this gap, as long as you stay within the band and
+       never violate goals 1-3.
+
+  You are NOT given a reference formula. Derive the algebra yourself. Do not try
+  to read or reverse-engineer the scorer; a program that only fits one grid will
+  fail the held-out grid.
+
+function_name: "calculate_entanglement_phase"
+allowed_imports: ["numpy", "math"]
+
+# Scoring is external. The fixed tests below are smoke-only and never encode the
+# reference answer; fitness comes from the grid evaluator:
+#   python physics_verification/grid_evaluator.py <champion>.py            # train grid
+#   python physics_verification/grid_evaluator.py <champion>.py --heldout  # gate
+evaluation_criteria:
+  external_evaluator: "physics_verification/grid_evaluator.py"
+  objective: "maximize divergence e-folds subject to correct scaling exponents"
+  primary_metric: "score"
+  gate: "must pass hard constraints and score > 0 on the --heldout grid"
+
+# Smoke-only tests: contract checks that DO NOT leak the reference formula.
+tests:
+  - description: "mass = 0 must yield (approximately) zero phase for both methods"
+    name: "zero_mass_smoke"
+    test_cases:
+      - input: [0.0, 1.0e-5, 1.0, "classical_qft"]
+        validation_func: |
+          def validate(output):
+              if not isinstance(output, (int, float)) or isinstance(output, bool):
+                  return f"Expected a real number, got {type(output)}"
+              if output != output or output in (float('inf'), float('-inf')):
+                  return "Output must be finite (NaN/Inf not allowed)."
+              return abs(output) < 1e-9 or f"Expected ~0 phase for mass=0, got {output}"
+      - input: [0.0, 1.0e-5, 1.0, "post_newtonian"]
+        validation_func: |
+          def validate(output):
+              if not isinstance(output, (int, float)) or isinstance(output, bool):
+                  return f"Expected a real number, got {type(output)}"
+              if output != output or output in (float('inf'), float('-inf')):
+                  return "Output must be finite (NaN/Inf not allowed)."
+              return abs(output) < 1e-9 or f"Expected ~0 phase for mass=0, got {output}"
+
+  - description: "Outputs must be finite real numbers for valid inputs (both methods)"
+    name: "finite_output_smoke"
+    test_cases:
+      - input: [1.0e-12, 1.0e-6, 1.0, "classical_qft"]
+        validation_func: |
+          def validate(output):
+              if not isinstance(output, (int, float)) or isinstance(output, bool):
+                  return f"Expected a real number, got {type(output)}"
+              if output != output or output in (float('inf'), float('-inf')):
+                  return "Output must be finite (NaN/Inf not allowed)."
+              return True
+      - input: [1.0e-12, 1.0e-6, 1.0, "post_newtonian"]
+        validation_func: |
+          def validate(output):
+              if not isinstance(output, (int, float)) or isinstance(output, bool):
+                  return f"Expected a real number, got {type(output)}"
+              if output != output or output in (float('inf'), float('-inf')):
+                  return "Output must be finite (NaN/Inf not allowed)."
+              return True

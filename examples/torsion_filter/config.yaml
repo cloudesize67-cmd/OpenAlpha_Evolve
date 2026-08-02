@@ -1,0 +1,103 @@
+# Torsion-pendulum signal-recovery task.
+#
+# Evolve the body of filter_signal(x, fs) (the EVOLVE-BLOCK in
+# initial_program.py) to recover a weak periodic torsion signal from a noisy
+# measurement. Programs are scored by evaluator.py -- NOT by the smoke tests
+# below -- as decibels of recovered SNR relative to a hand-tuned human baseline
+# (>0 dB beats the engineer), distortion-penalised and averaged robustly across
+# many noise seeds. The held-out seed set (evaluator.py --heldout) is the gate
+# for publishability; see README.md for the fitness ladder and rules.
+
+task_id: "torsion_filter_v1"
+
+task_description: |
+  Improve the digital filter filter_signal(x, fs) so it recovers a faint
+  torsion-balance signal (a known 5 Hz tone) buried in broadband white noise,
+  pink (1/f) noise, 60 Hz line interference, and slow baseline drift.
+
+  Signature: filter_signal(x, fs)   (apply_filter / evolve_filter / denoise also accepted)
+    - x:  1-D numpy array, the noisy measurement
+    - fs: float, sample rate in Hz
+    - returns: a 1-D numpy array the SAME length as x, estimating the clean
+      signal.
+
+  How you are scored (by evaluator.py, deterministically):
+    * Band-SNR gain in dB: signal power in a narrow band around 5 Hz vs a wide
+      noise band (via Welch PSD), candidate minus raw input, across many seeds.
+    * Robust aggregate: median(gain) - 0.5*std(gain), so consistency is rewarded.
+    * A distortion penalty: losing more than 3 dB of the 5 Hz tone amplitude is
+      charged against you, even if it suppresses noise well.
+    * The reported combined_score is RELATIVE to an engineered Butterworth
+      bandpass baseline: combined_score = your_fitness - baseline_fitness.
+      A positive combined_score beats the engineer.
+
+  Rules (enforced by the design of the task and by review):
+    1. Do NOT read, import, or reverse-engineer evaluator.py, and do NOT
+       hardcode the tone frequencies, seed values, or any constant lifted from
+       the scoring harness. A filter that only works because it memorised the
+       test setup will fail the held-out seed set and is not publishable.
+    2. filter_signal must be a genuine, causal-or-linear-phase filter that
+       generalises: it will be re-scored on a disjoint held-out seed set.
+    3. Keep every output finite and the same length as the input.
+
+  Ideas to explore: a well-designed FIR/IIR bandpass matched to the science
+  band, sharper stopband rejection for the drift and mains, Wiener-style
+  weighting, or multi-stage detrend-then-bandpass. Tighten the passband only as
+  far as the tones allow -- clipping the band edges costs you distortion.
+
+# Evolve only the marked block inside the seed file.
+target_file_path: "examples/torsion_filter/initial_program.py"
+function_name: "filter_signal"
+evolve_blocks:
+  - block_id: "filter"
+    start_marker: "# EVOLVE-BLOCK-START filter"
+    end_marker: "# EVOLVE-BLOCK-END filter"
+
+allowed_imports: ["numpy", "scipy", "math"]
+
+# The real objective lives in evaluator.py; run it to score a champion:
+#   python examples/torsion_filter/evaluator.py <program.py>            # train
+#   python examples/torsion_filter/evaluator.py --heldout <program.py>  # gate
+evaluation_criteria:
+  external_evaluator: "examples/torsion_filter/evaluator.py"
+  objective: "maximize band-SNR gain relative to the engineered Butterworth baseline"
+  primary_metric: "combined_score"
+  gate: "combined_score must stay positive on the --heldout seeds"
+
+# --- Cost-disciplined model split -----------------------------------------
+# Spend cheap tokens on breadth and reserve the strong model for refining the
+# already-good elites. These map onto the env vars read by config/settings.py;
+# set them in .env (see .env.example) rather than here.
+model_policy:
+  # Cheap, fast model for the bulk of mutations (exploration / breadth).
+  breadth_model_env: "LLM_SECONDARY_MODEL"
+  # Strong, more expensive model, used only to refine high-fitness elites.
+  elite_model_env: "LLM_PRIMARY_MODEL"
+  # A program is "elite" (gets the strong model) once its normalised fitness
+  # exceeds this threshold; keep it high so strong-model calls stay rare.
+  elite_threshold_env: "HIGH_FITNESS_THRESHOLD_FOR_PRIMARY_LLM"
+  suggested_env:
+    POPULATION_SIZE: 12
+    GENERATIONS: 8
+    HIGH_FITNESS_THRESHOLD_FOR_PRIMARY_LLM: 0.85
+
+# Smoke tests only: these check the CONTRACT (finite, correct length, does not
+# crash), never the objective. Fitness comes from evaluator.py so the answer is
+# never leaked through the test suite.
+tests:
+  - description: "filter_signal returns a finite array of the same length"
+    name: "contract_smoke_test"
+    test_cases:
+      # A tiny (signal, fs) pair; the real objective is scored by evaluator.py.
+      - input: [[0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0, -1.0], 256.0]
+        validation_func: |
+          def validate(output):
+              import numpy as np
+              arr = np.asarray(output, dtype=float)
+              if arr.ndim != 1:
+                  return f"expected a 1-D array, got shape {arr.shape}"
+              if arr.shape[0] != 8:
+                  return f"expected length 8, got {arr.shape[0]}"
+              if not np.all(np.isfinite(arr)):
+                  return "output contains NaN or Inf"
+              return True
