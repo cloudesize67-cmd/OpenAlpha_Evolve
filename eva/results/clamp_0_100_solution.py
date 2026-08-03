@@ -1,4 +1,5 @@
 # Task: solve(n) clamps integer n into [0, 100].
-# Evolved at generation 23 | held-out accuracy: 1.0
+# Evolved at generation 10 | NOT VERIFIED — diagnostic artifact only, do not use as ground truth
+# held-out accuracy: 0.5 | probe accuracy: 0.25
 def solve(n):
-    return abs(max(0, min(100, n)))
+    return max(0, n)

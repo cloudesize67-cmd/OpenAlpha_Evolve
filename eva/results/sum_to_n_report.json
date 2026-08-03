@@ -2,17 +2,18 @@
   "task": "sum_to_n",
   "spec": "solve(n) returns the sum 0+1+...+n (closed form, integer n >= 0).",
   "seed": 42,
-  "best_solution": "min(n, 6) ** 2",
+  "best_solution": "n + (n + n + n) * n // 7",
   "reference": "n * (n + 1) // 2",
   "exact_match": false,
   "verifier": {
-    "code": "min(n, 6) ** 2",
-    "fitness": 0.25,
-    "confidence": 0.25,
-    "calibration_penalty": 0.125,
-    "adjusted_fitness": 0.145,
-    "tests_passed": 3,
+    "code": "n + (n + n + n) * n // 7",
+    "fitness": 0.663333,
+    "confidence": 0.6633,
+    "calibration_penalty": 0.331667,
+    "adjusted_fitness": 0.351667,
+    "tests_passed": 8,
     "tests_total": 12,
+    "complexity": 21,
     "checks": {
       "runs_safely": true,
       "within_time_budget": true,
@@ -31,10 +32,10 @@
       2500
     ],
     "heldout_preds": [
-      36,
-      36,
-      36,
-      36
+      1121,
+      4385,
+      429571,
+      2681071
     ],
     "heldout_expected": [
       1275,
@@ -43,9 +44,15 @@
       3126250
     ]
   },
+  "probe": {
+    "probe_accuracy": 0.0,
+    "probe_size": 40
+  },
+  "solved_at_convergence": false,
+  "verified_for_harvest": false,
   "stats": {
     "generations_run": 150,
-    "distinct_structures": 4597,
-    "unique_candidates": 6122
+    "distinct_structures": 4464,
+    "unique_candidates": 5742
   }
 }

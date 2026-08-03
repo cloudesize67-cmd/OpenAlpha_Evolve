@@ -2,23 +2,24 @@
   "task": "collatz_step",
   "spec": "solve(n) returns one Collatz step: n//2 if n is even, 3*n+1 if n is odd (integer n >= 1).",
   "seed": 42,
-  "best_solution": "n // (0 - (n - n) - 2) % n",
+  "best_solution": "(n if n // 2 else 9) // 2",
   "reference": "n // 2 if n % 2 == 0 else 3 * n + 1",
   "exact_match": false,
   "verifier": {
-    "code": "n // (0 - (n - n) - 2) % n",
-    "fitness": 0.470588,
-    "confidence": 0.4706,
-    "calibration_penalty": 0.0,
-    "adjusted_fitness": 0.490588,
-    "tests_passed": 8,
+    "code": "(n if n // 2 else 9) // 2",
+    "fitness": 0.529412,
+    "confidence": 0.5294,
+    "calibration_penalty": 0.014706,
+    "adjusted_fitness": 0.534706,
+    "tests_passed": 9,
     "tests_total": 17,
+    "complexity": 12,
     "checks": {
       "runs_safely": true,
       "within_time_budget": true,
       "uses_input_variable": true,
       "complexity_ok": true,
-      "generalizes_to_val": true
+      "generalizes_to_val": false
     },
     "error": null
   },
@@ -43,9 +44,15 @@
       2614
     ]
   },
+  "probe": {
+    "probe_accuracy": 0.55,
+    "probe_size": 40
+  },
+  "solved_at_convergence": false,
+  "verified_for_harvest": false,
   "stats": {
     "generations_run": 150,
-    "distinct_structures": 5194,
-    "unique_candidates": 6446
+    "distinct_structures": 4566,
+    "unique_candidates": 5934
   }
 }
