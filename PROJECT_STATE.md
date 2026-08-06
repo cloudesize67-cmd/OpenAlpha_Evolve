@@ -46,6 +46,12 @@ because hyperscalers are supply-constrained and desperate for useful workloads.
   ALPHAEVOLVE_DATA_BRIEF, COSCIENTIST_DATA_BRIEF, SIMA2_DATA_BRIEF,
   SELF_HOSTED_BUILD_BLUEPRINT, **MASTER_ARCHITECTURE.md (the six-layer plan —
   read second)**, NOESIS_BUILD_PLAN.md (Milestone B full design).
+- 2026-08-06 (late): `examples/torsion_filter/run_evolution.py` — self-
+  contained Milestone A loop on Gemini free tier (numpy-only, no openevolve
+  install). Sandbox-verified: preflight reproduces 3.847/5.956 exactly, seed
+  scores -2.11, mock candidate scored +2.79, traces + checkpoints + resume
+  all work. Enforces the Law: no seed/evaluator leaks into prompts, held-out
+  never auto-run.
 
 ## Verified numbers (benchmarks)
 
@@ -58,8 +64,8 @@ Grid evaluator: reference 39.6, constants-cheat hard-fails, band-edge 45.6.
 ## Roadmap
 
 - **Milestone A:** pre-flight on Termux (commands below; sandbox-verified
-  2026-08-06), then OpenEvolve loop on free-tier Gemini key; claim only the
-  `--heldout` number.
+  2026-08-06), then `run_evolution.py --iterations 60` on free-tier Gemini
+  key; claim only the `--heldout` number.
 - **Milestone B (NOESIS): FULL PLAN EXISTS — research/NOESIS_BUILD_PLAN.md.**
   Ground-truth ladder: synthetic injector (make_campaign(), we build) ->
   FiveThirtyEight IRA tweets (zero-friction clone, positives only) ->
@@ -91,6 +97,19 @@ Gate: must print `naive MA : 3.847` and `engineer baseline: 5.956`.
 python evaluator_termux.py candidate_a.py && python evaluator_termux.py --heldout candidate_a.py
 ```
 Want: `combined_score` ≈ +12.1, held-out ≈ 17.9. That is pre-flight PASS.
+
+Milestone A part 2 (the evolution run itself):
+```bash
+export GEMINI_API_KEY="paste-your-free-key-here"
+```
+```bash
+python run_evolution.py --preflight-only
+```
+```bash
+python run_evolution.py --iterations 60
+```
+When it finishes, the held-out command is printed — run it yourself and only
+THAT number gets claimed.
 
 Termux survival rules: `$` = shell (commands go here); `>>>` = inside Python
 (`exit()` to leave); blank cursor with no `$` = inside `cat` (Volume Down + D
