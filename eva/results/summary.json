@@ -1,32 +1,47 @@
 {
   "double_plus_one": {
-    "best": "n + (1 + n)",
+    "best": "n + 1 + (n if n < n else n)",
     "heldout": 1.0,
+    "probe_accuracy": 1.0,
     "train_pass": "14/14",
-    "exact_match": false
+    "exact_match": false,
+    "verified_for_harvest": true,
+    "status": "verified"
   },
   "sum_to_n": {
-    "best": "min(n, 6) ** 2",
+    "best": "n + (n + n + n) * n // 7",
     "heldout": 0.0,
-    "train_pass": "3/12",
-    "exact_match": false
+    "probe_accuracy": 0.0,
+    "train_pass": "8/12",
+    "exact_match": false,
+    "verified_for_harvest": false,
+    "status": "UNCONVERGED \u2014 do not harvest"
   },
   "is_even": {
-    "best": "(n if 10 * n % 4 <= 9 * n * (6 * n == n + n) * n else 8) == n",
+    "best": "(0 >= n + 1) >= (100 * n % 8) ** 2",
     "heldout": 1.0,
+    "probe_accuracy": 1.0,
     "train_pass": "14/14",
-    "exact_match": false
+    "exact_match": false,
+    "verified_for_harvest": true,
+    "status": "verified"
   },
   "collatz_step": {
-    "best": "n // (0 - (n - n) - 2) % n",
+    "best": "(n if n // 2 else 9) // 2",
     "heldout": 0.5,
-    "train_pass": "8/17",
-    "exact_match": false
+    "probe_accuracy": 0.55,
+    "train_pass": "9/17",
+    "exact_match": false,
+    "verified_for_harvest": false,
+    "status": "UNCONVERGED \u2014 do not harvest"
   },
   "clamp_0_100": {
-    "best": "abs(max(0, min(100, n)))",
-    "heldout": 1.0,
-    "train_pass": "20/20",
-    "exact_match": false
+    "best": "max(0, n)",
+    "heldout": 0.5,
+    "probe_accuracy": 0.25,
+    "train_pass": "16/20",
+    "exact_match": false,
+    "verified_for_harvest": false,
+    "status": "UNCONVERGED \u2014 do not harvest"
   }
 }

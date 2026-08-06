@@ -157,6 +157,16 @@ For open-ended, non-verifiable behavior (tone, helpfulness, safety judgment): Dr
 - **Held-out accuracy: 1.0** (zero generalization gap), **calibration penalty: 0.0**, all anti-gaming checks passed.
 - 2,537 distinct structures explored — the novelty archive kept diversity rising throughout the run.
 
+### 9.1 Phase 2 findings: verification hardening
+
+Running `eva/phase2_code_evolution.py` end-to-end against real code tasks surfaced exactly the kind of gap Section 6's threat model anticipates, verified by direct execution of the evolved candidates rather than by inspection:
+
+- **A genuine memorization exploit** on `sum_to_n`: the evolved "best" (`min(n, 6) ** 2`) references the input variable — so it passed the original hardcode check — yet is wrong on ~98% of a wide integer range. Only a wide-range **probe split**, held out of the fitness signal entirely and used solely to gate harvest eligibility, exposes this.
+- **A bloated-but-genuinely-correct formula** on `is_even`: convoluted boolean arithmetic that direct execution confirmed is actually correct everywhere. Not a correctness exploit — a parsimony gap. An Occam's-razor tiebreak (fitness first, AST size second) now suppresses this without a per-task special case.
+- **A search-capability gap**, not a verification gap, on `sum_to_n`/`collatz_step`: pure AST mutation plateaus below solving these without the LLM hook. The fix that matters for *verification integrity* is refusing to launder that plateau as success — reports now carry an explicit `verified_for_harvest` gate (converged **and** generalizes on both held-out and probe splits) so an unconverged run is labeled `UNCONVERGED — do not harvest` rather than silently looking identical to a real win.
+
+These are now permanent regressions in `eva/test_verifier_hardening.py`, per the L6 principle that every discovered specification-gaming incident becomes a regression test. Full writeup: `eva/README.md`.
+
 ## 10. Limitations & Open Questions
 
 1. **Verifiability boundary.** The entire L1–L4 stack requires a computable fitness function. Extending verifiers toward fuzzy domains (fact-checkers with confidence scores, execution-based reasoning checks) is the highest-leverage open problem.

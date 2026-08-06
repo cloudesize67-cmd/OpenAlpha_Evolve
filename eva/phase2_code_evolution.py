@@ -242,6 +242,23 @@ def mutate(node: ast.expr) -> ast.expr:
     return tree
 
 
+def random_branch_expr(depth: int) -> ast.expr:
+    """Force an IfExp at the top level.
+
+    The general `random_expr`/`mutate` grammar under-samples genuine
+    piecewise structure: growing an if/else only happens in the rarest
+    ~10% mutation bucket, and only ~30% of *that* keeps both branches
+    non-trivial. On collatz_step (needs n//2 vs 3*n+1, i.e. two distinct
+    non-degenerate branches) that compounds into a real search blind spot —
+    the population converged on a degenerate arithmetic near-miss instead of
+    ever discovering the branch. This generator is injected during stalls
+    (see `CodeEvolution.run`) specifically to counter that bias.
+    """
+    test = ast.Compare(left=random_expr(depth - 1), ops=[random.choice(CMP_OPS)()],
+                       comparators=[random_expr(depth - 1)])
+    return ast.IfExp(test=test, body=random_expr(depth - 1), orelse=random_expr(depth - 1))
+
+
 def crossover(a: ast.expr, b: ast.expr) -> ast.expr:
     child, donor = copy.deepcopy(a), copy.deepcopy(b)
     target = random.choice(_expr_nodes(child))
@@ -277,17 +294,41 @@ class EvalResult:
     adjusted_fitness: float
     tests_passed: int = 0
     tests_total: int = 0
+    complexity: int = 0
     checks: dict = field(default_factory=dict)
     error: str | None = None
 
 
+def _make_probe_split(task: dict, rng: random.Random, n_points: int = 40) -> list:
+    """A wide-range synthetic input sample, independent of train/val/heldout.
+
+    Used ONLY to gate harvest eligibility after the fact (see
+    `verified_for_harvest`) — never fed into `adjusted_fitness`, so it can't
+    itself become a target the search overfits to. This is what caught the
+    sum_to_n `min(n, 6) ** 2` exploit: it passes train/val/heldout construction
+    but collapses the moment inputs range outside the tiny visible window.
+    """
+    seen = set(task["train"]) | set(task["val"]) | set(task["heldout"])
+    lo = min(task["train"] + task["val"] + task["heldout"]) - 200
+    hi = max(task["train"] + task["val"] + task["heldout"]) + 200
+    points = []
+    while len(points) < n_points:
+        x = rng.randint(lo, hi)
+        if x not in seen:
+            points.append(x)
+            seen.add(x)
+    return points
+
+
 class CodeVerifier:
-    def __init__(self, task: dict, time_budget_s=0.5, lambda_calib=0.5):
+    def __init__(self, task: dict, time_budget_s=0.5, lambda_calib=0.5, probe_seed=1337):
         self.task = task
         self.time_budget = time_budget_s
         self.lambda_calib = lambda_calib
         self.expected = {split: [self._ref(x) for x in task[split]]
                          for split in ("train", "val", "heldout")}
+        self.probe_inputs = _make_probe_split(task, random.Random(probe_seed))
+        self.expected["probe"] = [self._ref(x) for x in self.probe_inputs]
 
     def _ref(self, x):
         return eval(self.task["reference"], {"__builtins__": {"min": min, "max": max, "abs": abs}},
@@ -295,8 +336,9 @@ class CodeVerifier:
 
     # -- canary: the evaluator must grade the reference solution perfectly --
     def self_test(self) -> bool:
-        for split in ("train", "val"):
-            preds = self._run(self.task["reference"], self.task[split])
+        for split, inputs in (("train", self.task["train"]), ("val", self.task["val"]),
+                              ("probe", self.probe_inputs)):
+            preds = self._run(self.task["reference"], inputs)
             if preds is None or preds != self.expected[split]:
                 return False
         return True
@@ -382,7 +424,7 @@ class CodeVerifier:
 
         return EvalResult(code_str, round(fit, 6), round(conf, 4),
                           round(calib_pen, 6), round(fit - calib_pen, 6),
-                          passed, total, checks)
+                          passed, total, n_nodes, checks)
 
     def heldout_report(self, code_str: str) -> dict:
         preds = self._run(code_str, self.task["heldout"])
@@ -394,6 +436,16 @@ class CodeVerifier:
                 "heldout_inputs": self.task["heldout"],
                 "heldout_preds": preds, "heldout_expected": self.expected["heldout"]}
 
+    def probe_report(self, code_str: str) -> dict:
+        """Wide-range anti-memorization gate. Reporting/gating only — see
+        `_make_probe_split` docstring for why this must never feed fitness."""
+        preds = self._run(code_str, self.probe_inputs)
+        if preds is None:
+            return {"probe_accuracy": 0.0, "probe_size": len(self.probe_inputs)}
+        acc = sum(1 for p, e in zip(preds, self.expected["probe"]) if p == e) \
+            / len(self.probe_inputs)
+        return {"probe_accuracy": round(acc, 4), "probe_size": len(self.probe_inputs)}
+
 # --------------------------------------------------------------------------
 # 5. Evolution loop
 # --------------------------------------------------------------------------
@@ -404,6 +456,18 @@ class Candidate:
     code: str
     generation: int
     result: EvalResult | None = None
+
+
+def selection_key(c: "Candidate"):
+    """Fitness first, then fewer AST nodes as an Occam's-razor tiebreak.
+
+    Rounding fitness to 4dp means two candidates within evaluation noise of
+    each other are ranked by parsimony instead — this is what suppresses
+    bloated-but-correct formulas (e.g. a convoluted boolean-arithmetic
+    encoding of is_even that happens to be correct everywhere but is far
+    more complex than the task warrants) in favor of minimal ones.
+    """
+    return (round(c.result.adjusted_fitness, 4), -c.result.complexity)
 
 
 class CodeEvolution:
@@ -434,7 +498,7 @@ class CodeEvolution:
     def _child(self, pop, gen) -> Candidate:
         def tourney():
             return max(random.sample(pop, min(self.tournament, len(pop))),
-                       key=lambda c: c.result.adjusted_fitness)
+                       key=selection_key)
 
         if random.random() < self.llm_fraction:
             parent = tourney()
@@ -451,7 +515,7 @@ class CodeEvolution:
             else mutate(tourney().node)
         return Candidate(node, expr_to_str(node), gen)
 
-    def run(self, generations: int, tag: str = ""):
+    def run(self, generations: int, tag: str = "", stall_limit=20, stall_injection_frac=0.3):
         assert self.v.self_test(), f"verifier self-test failed for {tag} — aborting"
 
         pop = []
@@ -459,8 +523,10 @@ class CodeEvolution:
             node = random_expr(4, top=True)
             pop.append(self._eval(Candidate(node, expr_to_str(node), 0)))
 
+        best_ever = -1.0
+        stalled = 0
         for gen in range(1, generations + 1):
-            pop.sort(key=lambda c: c.result.adjusted_fitness, reverse=True)
+            pop.sort(key=selection_key, reverse=True)
             best = pop[0]
             mean_fit = sum(c.result.adjusted_fitness for c in pop) / len(pop)
             self.history.append({"gen": gen, "best_code": best.code,
@@ -479,11 +545,29 @@ class CodeEvolution:
                 print(f"  [{tag}] solved at generation {gen}: {best.code}")
                 break
 
-            elites = [copy.deepcopy(c) for c in pop[:self.elite]]
-            pop = elites + [self._eval(self._child(pop, gen))
-                            for _ in range(self.pop_size - self.elite)]
+            if best.result.adjusted_fitness > best_ever + 1e-9:
+                best_ever = best.result.adjusted_fitness
+                stalled = 0
+            else:
+                stalled += 1
 
-        pop.sort(key=lambda c: c.result.adjusted_fitness, reverse=True)
+            elites = [copy.deepcopy(c) for c in pop[:self.elite]]
+            children = []
+            if stalled >= stall_limit:
+                # Population has plateaued: inject fresh branch-biased
+                # structures instead of only mutating around the current
+                # elites, which by construction can't escape their own
+                # structural blind spot. See `random_branch_expr`.
+                n_inject = int((self.pop_size - self.elite) * stall_injection_frac)
+                for _ in range(n_inject):
+                    node = random_branch_expr(3)
+                    children.append(self._eval(Candidate(node, expr_to_str(node), gen)))
+                stalled = 0
+            children += [self._eval(self._child(pop, gen))
+                        for _ in range(self.pop_size - self.elite - len(children))]
+            pop = elites + children
+
+        pop.sort(key=selection_key, reverse=True)
         return pop[0]
 
 # --------------------------------------------------------------------------
@@ -513,25 +597,52 @@ def main():
                              llm_fraction=args.llm_fraction)
         best = loop.run(args.gens, tag=name)
 
+        solved_at_convergence = (best.result.tests_passed == best.result.tests_total
+                                 and best.result.checks.get("generalizes_to_val")
+                                 and best.result.checks.get("uses_input_variable"))
+        held_out = verifier.heldout_report(best.code)
+        probe = verifier.probe_report(best.code)
+        # The harvest gate for L2 (SFT/RLVR ground truth): a candidate is
+        # eligible ONLY if it converged on the "solved" criterion during
+        # search AND generalizes on both the fixed held-out set and the wide
+        # synthetic probe split. Any one of these failing (as happened for
+        # sum_to_n and collatz_step in the original unhardened run) means the
+        # reported "best" is a diagnostic artifact of a stalled search, not
+        # ground truth, and must never be fed downstream un-flagged.
+        verified_for_harvest = bool(
+            solved_at_convergence
+            and held_out["heldout_accuracy"] >= 0.999
+            and probe["probe_accuracy"] >= 0.999)
+
         report = {"task": name, "spec": task["spec"], "seed": args.seed,
                   "best_solution": best.code, "reference": task["reference"],
                   "exact_match": best.code.replace(" ", "") ==
                                  task["reference"].replace(" ", ""),
                   "verifier": asdict(best.result),
-                  "held_out": verifier.heldout_report(best.code),
+                  "held_out": held_out,
+                  "probe": probe,
+                  "solved_at_convergence": solved_at_convergence,
+                  "verified_for_harvest": verified_for_harvest,
                   "stats": {"generations_run": loop.history[-1]["gen"] if loop.history else 0,
                             "distinct_structures": len(loop.archive),
                             "unique_candidates": len(loop.cache)}}
-        summary[name] = {"best": best.code, "heldout": report["held_out"]["heldout_accuracy"],
+        summary[name] = {"best": best.code, "heldout": held_out["heldout_accuracy"],
+                         "probe_accuracy": probe["probe_accuracy"],
                          "train_pass": f"{best.result.tests_passed}/{best.result.tests_total}",
-                         "exact_match": report["exact_match"]}
+                         "exact_match": report["exact_match"],
+                         "verified_for_harvest": verified_for_harvest,
+                         "status": "verified" if verified_for_harvest
+                                   else "UNCONVERGED — do not harvest"}
 
         with open(os.path.join(args.out, f"{name}_report.json"), "w") as f:
             json.dump(report, f, indent=2)
         with open(os.path.join(args.out, f"{name}_solution.py"), "w") as f:
+            status_line = ("VERIFIED for harvest" if verified_for_harvest
+                           else "NOT VERIFIED — diagnostic artifact only, do not use as ground truth")
             f.write(f"# Task: {task['spec']}\n"
-                    f"# Evolved at generation {best.generation} | "
-                    f"held-out accuracy: {report['held_out']['heldout_accuracy']}\n"
+                    f"# Evolved at generation {best.generation} | {status_line}\n"
+                    f"# held-out accuracy: {held_out['heldout_accuracy']} | "
+                    f"probe accuracy: {probe['probe_accuracy']}\n"
                     f"def solve(n):\n    return {best.code}\n")
 
     with open(os.path.join(args.out, "summary.json"), "w") as f:
@@ -540,7 +651,7 @@ def main():
     print("\n=== SUMMARY ===")
     for name, s in summary.items():
         print(f"  {name:<16} train {s['train_pass']:>6} | held-out {s['heldout']:.2f} "
-              f"| exact-match {s['exact_match']} | {s['best'][:48]}")
+              f"| probe {s['probe_accuracy']:.2f} | {s['status']:<28} | {s['best'][:40]}")
     print(f"\nReports written to {args.out}/")
 
 
