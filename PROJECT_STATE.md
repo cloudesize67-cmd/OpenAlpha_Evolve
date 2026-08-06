@@ -1,5 +1,5 @@
 # PROJECT STATE — compressed record of the full collaboration
-**Read this first at the start of any new session.** Last updated: 2026-08-02.
+**Read this first at the start of any new session.** Last updated: 2026-08-06 (evening).
 
 ## Who & what this is
 
@@ -25,42 +25,55 @@ because hyperscalers are supply-constrained and desperate for useful workloads.
 - Validate any auto-metric against ground truth before trusting it
   (AlphaEvolve evaluator pattern; Google AI co-scientist Elo-vs-GPQA pattern;
   cf-PICI blind re-discovery pattern).
+- 2026-08-06 additions: actor never judges itself; judge never acts. Every
+  claim carries its verification artifact (code + score + command).
+
+## Current posture (2026-08-06)
+
+- **Paid AI APIs PAUSED by user decision.** $0 engine path confirmed:
+  OpenEvolve runs on the Gemini FREE TIER (key: aistudio.google.com/apikey,
+  exported as OPENAI_API_KEY). The one missing piece for Milestone A part 2.
+- Token discipline: no agents/tool calls unless the spend directly serves a
+  stated goal; user asks "is this necessary?"
 
 ## Repo state (cloudesize67-cmd/OpenAlpha_Evolve)
 
-- `76e911e` — `examples/torsion_filter/`: `evaluator.py` (scipy version,
-  scores dB relative to engineer baseline), `initial_program.py` (seed with
-  EVOLVE-BLOCK), `config.yaml` (cheap-model breadth / strong-model elite
-  refinement), `README.md` (fitness ladder, rules).
-- `892dd3b` — `physics_verification/grid_evaluator.py` (champion scorer for
-  the quantum-gravity toy task: log-log regression of scaling exponents +
-  divergence score, held-out ranges) + `examples/quantum_gravity_scaling_v2.yaml`
-  (reference-free task prompt; reference implementation REMOVED from prompt
-  because it leaked the answer).
-- `2cf7eb6` — `examples/torsion_filter/evaluator_termux.py` (pure-numpy twin;
-  scipy won't build on Termux) + `TERMUX_SETUP.md`.
-- Latest — `examples/torsion_filter/candidate_a.py` (reference numpy FIR
-  bandpass candidate) + this file.
+- `76e911e` — `examples/torsion_filter/`: evaluator, seed, config, README.
+- `892dd3b` — `physics_verification/grid_evaluator.py` + reference-free v2 task.
+- `2cf7eb6` — `evaluator_termux.py` (pure-numpy twin) + TERMUX_SETUP.md.
+- `4614c9f` — `candidate_a.py` + this file.
+- 2026-08-06: `RESOURCE_PLAN.md` (root) + `research/` bank:
+  ALPHAEVOLVE_DATA_BRIEF, COSCIENTIST_DATA_BRIEF, SIMA2_DATA_BRIEF,
+  SELF_HOSTED_BUILD_BLUEPRINT, **MASTER_ARCHITECTURE.md (the six-layer plan —
+  read second)**, NOESIS_BUILD_PLAN.md (Milestone B full design).
 
 ## Verified numbers (benchmarks)
 
-Torsion task, TRAIN_SEEDS: naive MA 3.85 < engineer baseline 5.96 (termux
-evaluator) / 6.12 (scipy evaluator) < strong bandpass 8.81; candidate_a raw
-~18.1, held-out ~17.9. NEVER mix numbers from the two evaluators in one table.
+Torsion task, TRAIN_SEEDS (reproduced in Kimi sandbox 2026-08-06, exact):
+naive MA 3.847 < engineer baseline 5.956 (termux evaluator); candidate_a
+combined +12.13 (raw 18.09), held-out 17.92; seed initial_program -2.11.
+NEVER mix numbers from the two evaluators in one table.
 Grid evaluator: reference 39.6, constants-cheat hard-fails, band-edge 45.6.
 
 ## Roadmap
 
-- **Milestone A (NOW):** score `candidate_a.py` on Termux (pre-flight), then
-  run the OpenEvolve loop so AI *discovers* a filter beating the 5.96
-  baseline; claim only the `--heldout` number.
-- **Milestone B:** blind re-discovery POC — strip labels from a documented
-  coordinated-manipulation campaign, system flags it blind, score vs public
-  takedown ground truth (mirrors Google's cf-PICI design at $0).
+- **Milestone A:** pre-flight on Termux (commands below; sandbox-verified
+  2026-08-06), then OpenEvolve loop on free-tier Gemini key; claim only the
+  `--heldout` number.
+- **Milestone B (NOESIS): FULL PLAN EXISTS — research/NOESIS_BUILD_PLAN.md.**
+  Ground-truth ladder: synthetic injector (make_campaign(), we build) ->
+  FiveThirtyEight IRA tweets (zero-friction clone, positives only) ->
+  Zenodo ICWSM-2025 campaigns w/ is_control labels (access-gated: account +
+  affiliation + 1 file/day — submit request NOW). Methods: content
+  duplication + temporal synchronization + co-activity graph (community
+  detection FIXED, seed=0, outside EVOLVE-BLOCK). Fork refs: QUT
+  coordination-network-toolkit (MIT), VIGINUM D3lta (MIT, has labeled
+  synthetic pairs). Coalition layer = aegis-net 5-agent repo (roles repaired:
+  LLMs interpret, never score). Target repo: cloudesize67-cmd/gemini.
 - **Then:** NSF ACCESS Explore application (draft at
-  /mnt/agents/output/NSF-ACCESS-Explore-Application-Draft.md). Note: ACCESS
-  needs U.S. institutional affiliation — cheapest route = one community
-  college course. NOESIS repo (misinformation system) is README-only for now.
+  /mnt/agents/output/NSF-ACCESS-Explore-Application-Draft.md). ACCESS needs
+  U.S. institutional affiliation — cheapest route = one community college
+  course (same affiliation unlocks Zenodo dataset access).
 - **NEVER lead with the SICQG quantum-gravity theory doc** — untestable as
   written, harms credibility. Physics interest routes through instruments/
   engineering (the torsion task is the salvageable thread).
@@ -77,7 +90,7 @@ Gate: must print `naive MA : 3.847` and `engineer baseline: 5.956`.
 ```bash
 python evaluator_termux.py candidate_a.py && python evaluator_termux.py --heldout candidate_a.py
 ```
-Want: `combined_score` ≈ +12, held-out ≈ 17.9. That is pre-flight PASS.
+Want: `combined_score` ≈ +12.1, held-out ≈ 17.9. That is pre-flight PASS.
 
 Termux survival rules: `$` = shell (commands go here); `>>>` = inside Python
 (`exit()` to leave); blank cursor with no `$` = inside `cat` (Volume Down + D
@@ -87,8 +100,9 @@ paste ONE block at a time; outputs shown for comparison are never typed.
 ## Where things live
 
 - Persistent memory instructions: saved in Kimi (project, the Law, repo
-  state, roadmap, working style) — auto-available in new sessions.
-- This file: GitHub repo root (PROJECT_STATE.md) + /mnt/agents/output/.
+  state, roadmap, working style, master-architecture pointer) —
+  auto-available in new sessions.
+- This file + RESOURCE_PLAN.md + research/ bank: GitHub repo.
 - Chat sidebar saving is handled by the Kimi app automatically; earlier
   separate chats are only visible to Kimi as short snippets — all substantive
   work is in THIS project's thread and captured in this file.
