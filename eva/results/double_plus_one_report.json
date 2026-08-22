@@ -2,17 +2,18 @@
   "task": "double_plus_one",
   "spec": "solve(n) returns 2*n + 1 for integer n.",
   "seed": 42,
-  "best_solution": "n + (1 + n)",
+  "best_solution": "n + 1 + (n if n < n else n)",
   "reference": "2 * n + 1",
   "exact_match": false,
   "verifier": {
-    "code": "n + (1 + n)",
+    "code": "n + 1 + (n if n < n else n)",
     "fitness": 1.0,
     "confidence": 1.0,
     "calibration_penalty": 0.0,
     "adjusted_fitness": 1.02,
     "tests_passed": 14,
     "tests_total": 14,
+    "complexity": 18,
     "checks": {
       "runs_safely": true,
       "within_time_budget": true,
@@ -43,9 +44,15 @@
       1999
     ]
   },
+  "probe": {
+    "probe_accuracy": 1.0,
+    "probe_size": 40
+  },
+  "solved_at_convergence": true,
+  "verified_for_harvest": true,
   "stats": {
-    "generations_run": 146,
-    "distinct_structures": 4471,
-    "unique_candidates": 5837
+    "generations_run": 100,
+    "distinct_structures": 3374,
+    "unique_candidates": 4341
   }
 }
