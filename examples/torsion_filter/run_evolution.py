@@ -1,7 +1,10 @@
 """
 run_evolution.py -- Milestone A evolution loop for the torsion-filter task.
 Self-contained: needs ONLY numpy. No openevolve install, no openai package.
-Engine: Gemini FREE tier via its OpenAI-compatible endpoint (plain HTTPS).
+Engine: the $0 fallback chain in ../free_engine.py (groq -> gemini ->
+cerebras -> openrouter -> github -> mistral -> local). Any subset of keys
+works; FREE_ROUTER_ORDER overrides the order; FREE_ENGINE_MOCK=1 runs
+fully offline for verification.
 
 THE LAW is enforced here:
   * evaluator_termux.py (deterministic) is the ONLY judge of fitness
@@ -9,14 +12,16 @@ THE LAW is enforced here:
   * held-out scoring is NEVER run by this script -- you run it yourself at
     the end, and the held-out number is the only number you publish
 
-Every (candidate, score) pair is logged to traces/ as JSONL. Those
-verifier-scored traces are the future RLVR fine-tuning dataset -- do not
-delete them.
+Every (candidate, score) pair is logged to traces/ as JSONL, including the
+provider that wrote each candidate. Those verifier-scored traces are the
+future RLVR fine-tuning dataset -- do not delete them.
 
 Setup (Termux):
+    export GROQ_API_KEY="..."        # any subset of free keys works
     export GEMINI_API_KEY="your-free-tier-key-from-aistudio.google.com/apikey"
     cd ~/OpenAlpha_Evolve/examples/torsion_filter
-    python run_evolution.py --preflight-only     # gate first
+    python run_evolution.py --preflight-only     # gate first (no keys needed)
+    python run_evolution.py --router-status      # who is configured/healthy
     python run_evolution.py --iterations 60      # the real run
 """
 import argparse
@@ -28,8 +33,6 @@ import re
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -38,8 +41,9 @@ SEED_PROGRAM = HERE / "initial_program.py"
 CHECKPOINTS = HERE / "checkpoints"
 TRACES = HERE / "traces"
 
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-DEFAULT_MODEL = "gemini-3.5-flash-lite"   # free-tier breadth model (config.yaml)
+sys.path.insert(0, str(HERE.parent))
+from free_engine import complete, report, EngineDownError, configured_providers
+
 TEMPERATURE = 0.7
 EVAL_TIMEOUT = 60                          # seconds per candidate evaluation
 
@@ -93,44 +97,6 @@ def preflight():
     return ok
 
 
-# ----------------------------- LLM driver ------------------------------------
-def call_gemini(prompt, model, key):
-    body = json.dumps({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": SYSTEM_MSG},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": TEMPERATURE,
-    }).encode()
-    req = urllib.request.Request(
-        GEMINI_URL, data=body,
-        headers={"Authorization": f"Bearer {key}",
-                 "Content-Type": "application/json"},
-        method="POST",
-    )
-    delay = 5
-    for attempt in range(6):
-        try:
-            with urllib.request.urlopen(req, timeout=120) as r:
-                data = json.loads(r.read().decode())
-            return data["choices"][0]["message"]["content"]
-        except urllib.error.HTTPError as e:
-            if e.code in (429, 500, 503) and attempt < 5:
-                print(f"  [rate limit {e.code}] retry in {delay}s")
-                time.sleep(delay)
-                delay = min(delay * 2, 120)
-            else:
-                raise
-        except urllib.error.URLError:
-            if attempt < 5:
-                time.sleep(delay)
-                delay = min(delay * 2, 120)
-            else:
-                raise
-    raise RuntimeError("unreachable")
-
-
 # ----------------------------- code handling ---------------------------------
 def extract_block(response):
     """Pull the evolved function out of the model's reply. Returns None if bad."""
@@ -171,8 +137,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--iterations", type=int, default=60)
     ap.add_argument("--preflight-only", action="store_true")
-    ap.add_argument("--model", default=os.environ.get("GEMINI_MODEL", DEFAULT_MODEL))
+    ap.add_argument("--router-status", action="store_true",
+                    help="print the free-engine provider table and exit")
     args = ap.parse_args()
+
+    if args.router_status:
+        print(report())
+        return
 
     CHECKPOINTS.mkdir(exist_ok=True)
     TRACES.mkdir(exist_ok=True)
@@ -182,9 +153,12 @@ def main():
     if args.preflight_only:
         return
 
-    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("OPENAI_API_KEY")
-    if not key:
-        sys.exit('Set your free key first: export GEMINI_API_KEY="..."')
+    if (os.environ.get("FREE_ENGINE_MOCK") != "1"
+            and not configured_providers()):
+        sys.exit("No free-engine provider configured. Set any of: "
+                 "GROQ_API_KEY, GEMINI_API_KEY, CEREBRAS_API_KEY, "
+                 "OPENROUTER_API_KEY, GITHUB_TOKEN, MISTRAL_API_KEY -- or "
+                 "export FREE_ENGINE_MOCK=1 for an offline verification run.")
 
     seed_block = SEED_PROGRAM.read_text().split(BLOCK_START)[1].split(BLOCK_END)[0].strip()
 
@@ -211,20 +185,23 @@ def main():
         parent = ranked[0] if random.random() < 0.7 else random.choice(
             ranked[: max(1, len(ranked) // 2)])
 
-        try:
-            reply = call_gemini(
-                USER_TEMPLATE.format(score=parent["score"],
-                                     parent_code=parent["code"]),
-                args.model, key)
-        except Exception as e:
-            print(f"[{it}] LLM error: {e}; skipping")
-            time.sleep(10)
-            continue
+        while True:
+            try:
+                reply, provider = complete(
+                    USER_TEMPLATE.format(score=parent["score"],
+                                         parent_code=parent["code"]),
+                    system=SYSTEM_MSG, temperature=TEMPERATURE)
+                break
+            except EngineDownError as e:
+                # Free tiers recover; never fake a result. Retry SAME iteration.
+                print(f"[{it}] engine down ({e}); sleeping 60s, retrying")
+                time.sleep(60)
 
         block = extract_block(reply)
         if block is None:
-            print(f"[{it}] unusable reply; skipping")
+            print(f"[{it}] unusable reply from {provider}; skipping")
             trace.write(json.dumps({"iteration": it, "parent_id": parent["id"],
+                                    "provider": provider,
                                     "rejected": True}) + "\n")
             continue
 
@@ -244,7 +221,7 @@ def main():
 
         trace.write(json.dumps({
             "iteration": it, "id": cand["id"], "parent_id": parent["id"],
-            "model": args.model, "code": block, "combined_score": score,
+            "provider": provider, "code": block, "combined_score": score,
             "raw_fitness_db": result.get("raw_fitness_db"),
             "ts": time.time(),
         }) + "\n")
@@ -259,6 +236,8 @@ def main():
 
     ckpt_file.write_text(json.dumps(
         {"pop": pop, "iteration": args.iterations, "best": best}))
+    # Always persist the champion (a run with no improvement still has one).
+    (CHECKPOINTS / "best_program.py").write_text(build_program(best["code"]))
     trace.close()
 
     print("\n=== RUN COMPLETE ===")
