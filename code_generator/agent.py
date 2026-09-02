@@ -24,11 +24,12 @@ class CodeGeneratorAgent(CodeGeneratorInterface):
         self.generation_config = {
             "temperature": settings.LITELLM_TEMPERATURE,
             "top_p": settings.LITELLM_TOP_P,
-            "top_k": settings.LITELLM_TOP_K,
             "max_tokens": settings.LITELLM_MAX_TOKENS,
         }
+        if settings.LITELLM_TOP_K is not None:
+            self.generation_config["top_k"] = settings.LITELLM_TOP_K
         self.litellm_extra_params = {
-            "base_url": settings.LITELLM_DEFAULT_BASE_URL,
+            k: v for k, v in {"base_url": settings.LITELLM_DEFAULT_BASE_URL}.items() if v is not None
         }
         logger.info(f"CodeGeneratorAgent initialized with model: {self.model_name}")
 
@@ -82,6 +83,9 @@ Make sure your diff can be applied correctly!
         if temperature is not None:
             current_generation_config["temperature"] = temperature
             logger.debug(f"Using temperature override: {temperature}")
+
+        # Remove None values so litellm/openai don't receive invalid parameters
+        current_generation_config = {k: v for k, v in current_generation_config.items() if v is not None}
 
         retries = settings.API_MAX_RETRIES
         delay = settings.API_RETRY_DELAY_SECONDS
