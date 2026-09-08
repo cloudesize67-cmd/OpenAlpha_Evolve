@@ -3,14 +3,31 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def _cast_int(value, default=None):
+    """Cast an env-var string to int; return default for None/empty/invalid."""
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _cast_float(value, default=None):
+    """Cast an env-var string to float; return default for None/empty/invalid."""
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
 # LLM Configuration
 FLASH_API_KEY = os.getenv("FLASH_API_KEY")
 FLASH_BASE_URL = os.getenv("FLASH_BASE_URL", None)
 FLASH_MODEL = os.getenv("FLASH_MODEL")
-
-# PRO_API_KEY = os.getenv("PRO_API_KEY")
-# PRO_BASE_URL = os.getenv("PRO_BASE_URL", None)
-# PRO_MODEL = os.getenv("PRO_MODEL")
 
 EVALUATION_API_KEY = os.getenv("EVALUATION_API_KEY")
 EVALUATION_BASE_URL = os.getenv("EVALUATION_BASE_URL", None)
@@ -19,18 +36,15 @@ EVALUATION_MODEL = os.getenv("EVALUATION_MODEL")
 # LiteLLM Configuration
 LITELLM_DEFAULT_MODEL = os.getenv("LITELLM_DEFAULT_MODEL", "gpt-3.5-turbo")
 LITELLM_DEFAULT_BASE_URL = os.getenv("LITELLM_DEFAULT_BASE_URL", None)
-LITELLM_MAX_TOKENS = os.getenv("LITELLM_MAX_TOKENS")
-LITELLM_TEMPERATURE = os.getenv("LITELLM_TEMPERATURE")
-LITELLM_TOP_P = os.getenv("LITELLM_TOP_P")
-LITELLM_TOP_K = os.getenv("LITELLM_TOP_K")
+# Cast numeric params so litellm receives typed values (or None), never raw strings.
+LITELLM_MAX_TOKENS = _cast_int(os.getenv("LITELLM_MAX_TOKENS"))
+LITELLM_TEMPERATURE = _cast_float(os.getenv("LITELLM_TEMPERATURE"))
+LITELLM_TOP_P = _cast_float(os.getenv("LITELLM_TOP_P"))
+LITELLM_TOP_K = _cast_int(os.getenv("LITELLM_TOP_K"))
 
 # Specific model names for strategic use (can be same as LITELLM_DEFAULT_MODEL if only one is used)
 LLM_PRIMARY_MODEL = os.getenv("LLM_PRIMARY_MODEL", LITELLM_DEFAULT_MODEL)
 LLM_SECONDARY_MODEL = os.getenv("LLM_SECONDARY_MODEL", FLASH_MODEL if FLASH_MODEL else LLM_PRIMARY_MODEL)
-
-# if not PRO_API_KEY:
-#     print("Warning: PRO_API_KEY not found in .env or environment. Using a NON-FUNCTIONAL placeholder. Please create a .env file with your valid API key.")
-#     PRO_API_KEY = "Your API key"
 
 # Evolutionary Algorithm Settings
 POPULATION_SIZE = int(os.getenv("POPULATION_SIZE", "5"))
@@ -45,16 +59,7 @@ MUTATION_RATE = 0.7
 CROSSOVER_RATE = 0.2
 
 # Corpus Seeding Settings
-# When enabled, the initial population is warm-started from the accumulated
-# best-program corpus for the task (data/best_corpus/<task_id>.jsonl, produced
-# by scripts/archive_run.py) instead of generating every gen-0 program fresh.
-# Seed programs are re-evaluated like any other candidate, and the remainder of
-# the population is still generated fresh so exploration is preserved. Has no
-# effect when the corpus file is absent or empty (e.g. a brand-new task), so the
-# default is safe: unseeded tasks behave exactly as before.
 SEED_FROM_CORPUS = os.getenv("SEED_FROM_CORPUS", "True").lower() == "true"
-# Max number of corpus programs to inject as seeds (capped at POPULATION_SIZE - 1
-# so at least one fresh program is always generated).
 SEED_CORPUS_COUNT = int(os.getenv("SEED_CORPUS_COUNT", "2"))
 BEST_CORPUS_DIR = os.getenv("BEST_CORPUS_DIR", "data/best_corpus")
 
@@ -102,12 +107,5 @@ def get_llm_model(model_type="default"):
     if model_type == "default":
         return LITELLM_DEFAULT_MODEL
     elif model_type == "flash":
-        # Assuming FLASH_MODEL might still be a specific, different model.
-        # If FLASH_MODEL is also meant to be covered by litellm's general handling,
-        # this could also return LITELLM_DEFAULT_MODEL or a specific flash model string.
-        # For now, keep FLASH_MODEL if it's distinct.
         return FLASH_MODEL if FLASH_MODEL else LITELLM_DEFAULT_MODEL # Return default if FLASH_MODEL is not set
-    # Fallback for any other model_type not explicitly handled
     return LITELLM_DEFAULT_MODEL
-
-                                 
