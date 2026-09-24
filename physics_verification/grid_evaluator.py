@@ -59,11 +59,27 @@ TARGETS = {
     "post_newtonian": {"mass": 1.0, "time": 1.0, "sep": -3.0},
 }
 
+TRAIN_SEPARATIONS = RANGES["train"]["sep"]
+HELDOUT_SEPARATIONS = RANGES["heldout"]["sep"]
+
+
+class Disqualified(Exception):
+    pass
+
 
 def reference_phase(mass, sep, time, method):
     if method == "classical_qft":
         return (G ** 2 * mass ** 3 * time) / (HBAR * sep ** 2)
     return (G * (mass * 1.0) * 0.5 * time) / (HBAR * sep ** 3)
+
+
+def constants_cheat_phase(mass, sep, time, method):
+    return G * mass * time
+
+
+def band_edge_phase(mass, sep, time, method):
+    scale = 1e-3 if method == "classical_qft" else 1e3
+    return reference_phase(mass, sep, time, method) * scale
 
 
 def load_fn(path):
@@ -155,6 +171,64 @@ def score_function(fn, ranges):
     }
 
 
+def _score(fn, separations):
+    base = {"mass": 1e-12, "time": 1.0}
+    outputs = {}
+    exponents = {}
+
+    for method, target in (("classical_qft", -2.0), ("post_newtonian", -3.0)):
+        zero_mass = _call(fn, 0.0, separations[0], base["time"], method)
+        if zero_mass is None or abs(zero_mass) > 1e-9:
+            raise Disqualified(f"zero-mass violated ({method}: {zero_mass})")
+
+        values = []
+        for separation in separations:
+            out = _call(fn, base["mass"], separation, base["time"], method)
+            if out is None:
+                raise Disqualified(f"non-finite output ({method})")
+            values.append(out)
+
+        slope, _ = np.polyfit(np.log10(separations), np.log10(np.abs(values)), 1)
+        slope = float(slope)
+        if abs(slope - target) > 0.25:
+            raise Disqualified(f"unexpected separation exponent for {method}: {slope:.3f}")
+
+        outputs[method] = np.array(values, dtype=float)
+        exponents[method] = slope
+
+    divergence = np.median(
+        np.abs(
+            np.log10(np.maximum(np.abs(outputs["classical_qft"]), 1e-300))
+            - np.log10(np.maximum(np.abs(outputs["post_newtonian"]), 1e-300))
+        )
+    )
+    exponent_error = abs(exponents["classical_qft"] + 2.0) + abs(exponents["post_newtonian"] + 3.0)
+    return {
+        "ok": True,
+        "score": float(divergence - exponent_error),
+        "qft_exponent": exponents["classical_qft"],
+        "pn_exponent": exponents["post_newtonian"],
+    }
+
+
+def evaluate(path):
+    try:
+        return _score(load_fn(path), TRAIN_SEPARATIONS)
+    except Disqualified as exc:
+        return {"ok": False, "score": float("-inf"), "error": f"disqualified: {exc}"}
+
+
+def selftest():
+    _score(reference_phase, TRAIN_SEPARATIONS)
+    try:
+        _score(constants_cheat_phase, TRAIN_SEPARATIONS)
+    except Disqualified:
+        pass
+    else:
+        return 1
+    return 0 if _score(band_edge_phase, TRAIN_SEPARATIONS)["score"] > _score(reference_phase, TRAIN_SEPARATIONS)["score"] else 1
+
+
 def _selftest():
     def reference(mass, separation, time, method):
         return reference_phase(mass, separation, time, method)
@@ -176,7 +250,7 @@ def _selftest():
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
-        _selftest()
+        raise SystemExit(selftest())
     else:
         path = sys.argv[1]
         rng = "heldout" if "--heldout" in sys.argv[2:] else "train"
