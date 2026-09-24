@@ -41,7 +41,7 @@ class EvaluatorAgent(EvaluatorAgentInterface, BaseAgent):
             return self._docker_available
         try:
             completed = subprocess.run(
-                ["docker", "info"],
+                ["docker", "version", "--format", "{{.Server.Version}}"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=5,
