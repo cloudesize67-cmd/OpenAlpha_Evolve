@@ -1,3 +1,4 @@
+import ast
 import importlib
 import os
 import unittest
@@ -67,8 +68,25 @@ class TaskManagerMainOrderRegressionTests(unittest.TestCase):
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         path = os.path.join(repo_root, "task_manager", "agent.py")
         with open(path, encoding="utf-8") as fh:
-            source = fh.read()
+            tree = ast.parse(fh.read(), filename=path)
 
-        sample_task_index = source.index("sample_task = TaskDefinition(")
-        task_manager_index = source.index("task_manager = TaskManagerAgent(task_definition=sample_task)")
-        self.assertLess(sample_task_index, task_manager_index)
+        sample_task_line = None
+        task_manager_line = None
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "sample_task":
+                        sample_task_line = node.lineno
+                    if isinstance(target, ast.Name) and target.id == "task_manager":
+                        call = node.value
+                        if (
+                            isinstance(call, ast.Call)
+                            and isinstance(call.func, ast.Name)
+                            and call.func.id == "TaskManagerAgent"
+                        ):
+                            task_manager_line = node.lineno
+
+        self.assertIsNotNone(sample_task_line)
+        self.assertIsNotNone(task_manager_line)
+        self.assertLess(sample_task_line, task_manager_line)

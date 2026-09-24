@@ -205,6 +205,8 @@ print(json.dumps(final_output, default=custom_json_serializer))
         proc = None
         use_docker = self._is_docker_available()
         if not use_docker:
+            if not settings.ALLOW_LOCAL_EVALUATION_FALLBACK:
+                return None, "Docker is not available and local fallback is disabled."
             logger.warning("Docker is not available; falling back to local subprocess execution for evaluation.")
         try:
             start_time = time.monotonic()

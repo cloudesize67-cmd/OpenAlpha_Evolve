@@ -47,6 +47,7 @@ class TestEvaluatorAgentDockerExecution(unittest.IsolatedAsyncioTestCase):
         self.mock_settings.DOCKER_IMAGE_NAME = "test-eval-image:latest"
         self.mock_settings.DOCKER_NETWORK_DISABLED = True
         self.mock_settings.EVALUATION_TIMEOUT_SECONDS = 5 # Short timeout for tests
+        self.mock_settings.ALLOW_LOCAL_EVALUATION_FALLBACK = False
         self.mock_docker_available_patcher = patch.object(EvaluatorAgent, '_is_docker_available', return_value=True)
         self.mock_docker_available_patcher.start()
 
@@ -189,6 +190,7 @@ class TestEvaluatorAgentDockerExecution(unittest.IsolatedAsyncioTestCase):
     @patch.object(EvaluatorAgent, '_is_docker_available', return_value=False)
     @patch('asyncio.create_subprocess_exec', new_callable=AsyncMock)
     async def test_execute_code_safely_local_fallback(self, mock_create_subprocess_exec, _mock_docker_available):
+        self.mock_settings.ALLOW_LOCAL_EVALUATION_FALLBACK = True
         expected_script_output = {
             "test_outputs": [{"test_case_id": 0, "output": 42, "runtime_ms": 10.0, "status": "success"}],
             "average_runtime_ms": 10.0
