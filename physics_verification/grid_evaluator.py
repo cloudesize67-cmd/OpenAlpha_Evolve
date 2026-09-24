@@ -186,6 +186,8 @@ def _score(fn, separations):
             out = _call(fn, base["mass"], separation, base["time"], method)
             if out is None:
                 raise Disqualified(f"non-finite output ({method})")
+            if out == 0:
+                raise Disqualified(f"zero output ({method})")
             values.append(out)
 
         slope, _ = np.polyfit(np.log10(separations), np.log10(np.abs(values)), 1)

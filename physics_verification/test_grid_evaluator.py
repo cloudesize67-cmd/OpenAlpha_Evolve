@@ -67,6 +67,12 @@ class GridDisqualificationTests(unittest.TestCase):
         with self.assertRaises(ge.Disqualified):
             ge._score(bad, ge.TRAIN_SEPARATIONS)
 
+    def test_zero_output_disqualified(self):
+        def bad(mass, separation, time, method):
+            return 0.0
+        with self.assertRaises(ge.Disqualified):
+            ge._score(bad, ge.TRAIN_SEPARATIONS)
+
     def test_evaluate_reports_disqualification(self):
         prog = ("G=6.67430e-11\n"
                 "def calculate_entanglement_phase(mass, separation, time, method):\n"
