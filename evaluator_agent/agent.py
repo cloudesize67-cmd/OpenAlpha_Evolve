@@ -21,6 +21,7 @@ class EvaluatorAgent(EvaluatorAgentInterface, BaseAgent):
         self.task_definition = task_definition
         self.evaluation_model_name = settings.EVALUATION_MODEL
         self.evaluation_timeout_seconds = settings.EVALUATION_TIMEOUT_SECONDS
+        self._docker_available: Optional[bool] = None
         logger.info(f"EvaluatorAgent initialized with model: {self.evaluation_model_name}, timeout: {self.evaluation_timeout_seconds}s")
         if self.task_definition:
             logger.info(f"EvaluatorAgent task_definition: {self.task_definition.id}")
@@ -35,8 +36,9 @@ class EvaluatorAgent(EvaluatorAgentInterface, BaseAgent):
             errors.append(f"Unexpected error during syntax check: {str(e)}")
         return errors
 
-    @staticmethod
-    def _is_docker_available() -> bool:
+    def _is_docker_available(self) -> bool:
+        if self._docker_available is not None:
+            return self._docker_available
         try:
             completed = subprocess.run(
                 ["docker", "info"],
@@ -46,8 +48,10 @@ class EvaluatorAgent(EvaluatorAgentInterface, BaseAgent):
                 check=False,
             )
         except (FileNotFoundError, OSError, subprocess.SubprocessError):
-            return False
-        return completed.returncode == 0
+            self._docker_available = False
+            return self._docker_available
+        self._docker_available = completed.returncode == 0
+        return self._docker_available
 
     async def _execute_code_safely(
         self,
