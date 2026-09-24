@@ -4,7 +4,6 @@ import os
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from code_generator.agent import CodeGeneratorAgent
 from config import settings
 
 
@@ -39,6 +38,8 @@ class SettingsRegressionTests(unittest.TestCase):
 class CodeGeneratorRegressionTests(unittest.IsolatedAsyncioTestCase):
     @patch("code_generator.agent.acompletion", new_callable=AsyncMock)
     async def test_none_generation_params_are_not_forwarded(self, mock_acompletion):
+        from code_generator.agent import CodeGeneratorAgent
+
         mock_message = type("Message", (), {"content": "print('ok')"})()
         mock_choice = type("Choice", (), {"message": mock_message})()
         mock_acompletion.return_value = type("Response", (), {"choices": [mock_choice]})()
