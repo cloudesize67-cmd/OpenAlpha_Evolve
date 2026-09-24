@@ -111,6 +111,9 @@ def engineer_baseline(x, fs):
     return signal.filtfilt(b, a, x)
 
 
+butter_notch = engineer_baseline
+
+
 def evaluate(program_path):
     """OpenEvolve entry point: higher combined_score = better."""
     try:
@@ -134,10 +137,21 @@ def validate_heldout(program_path):
     return evaluate_with_seeds(fn, HELDOUT_SEEDS)
 
 
+def selftest():
+    naive = evaluate_with_seeds(naive_moving_average, TRAIN_SEEDS)
+    baseline = evaluate_with_seeds(engineer_baseline, TRAIN_SEEDS)
+    print("naive MA        :", round(naive, 3))
+    print("engineer baseline:", round(baseline, 3))
+    if baseline > naive:
+        print("PASS")
+        return 0
+    print("FAIL")
+    return 1
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
-        print("naive MA        :", round(evaluate_with_seeds(naive_moving_average, TRAIN_SEEDS), 3))
-        print("engineer baseline:", round(evaluate_with_seeds(engineer_baseline, TRAIN_SEEDS), 3))
+        raise SystemExit(selftest())
     elif len(sys.argv) > 1 and sys.argv[1] == "--heldout":
         print(validate_heldout(sys.argv[2]))
     else:

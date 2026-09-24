@@ -3,6 +3,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def _get_optional_int(name):
+    value = os.getenv(name)
+    return int(value) if value not in (None, "") else None
+
+
+def _get_optional_float(name):
+    value = os.getenv(name)
+    return float(value) if value not in (None, "") else None
+
 # LLM Configuration
 FLASH_API_KEY = os.getenv("FLASH_API_KEY")
 FLASH_BASE_URL = os.getenv("FLASH_BASE_URL", None)
@@ -19,10 +29,10 @@ EVALUATION_MODEL = os.getenv("EVALUATION_MODEL")
 # LiteLLM Configuration
 LITELLM_DEFAULT_MODEL = os.getenv("LITELLM_DEFAULT_MODEL", "gpt-3.5-turbo")
 LITELLM_DEFAULT_BASE_URL = os.getenv("LITELLM_DEFAULT_BASE_URL", None)
-LITELLM_MAX_TOKENS = os.getenv("LITELLM_MAX_TOKENS")
-LITELLM_TEMPERATURE = os.getenv("LITELLM_TEMPERATURE")
-LITELLM_TOP_P = os.getenv("LITELLM_TOP_P")
-LITELLM_TOP_K = os.getenv("LITELLM_TOP_K")
+LITELLM_MAX_TOKENS = _get_optional_int("LITELLM_MAX_TOKENS")
+LITELLM_TEMPERATURE = _get_optional_float("LITELLM_TEMPERATURE")
+LITELLM_TOP_P = _get_optional_float("LITELLM_TOP_P")
+LITELLM_TOP_K = _get_optional_int("LITELLM_TOP_K")
 
 # Specific model names for strategic use (can be same as LITELLM_DEFAULT_MODEL if only one is used)
 LLM_PRIMARY_MODEL = os.getenv("LLM_PRIMARY_MODEL", LITELLM_DEFAULT_MODEL)
@@ -72,6 +82,7 @@ EVALUATION_TIMEOUT_SECONDS = 800
 # Docker Execution Settings
 DOCKER_IMAGE_NAME = os.getenv("DOCKER_IMAGE_NAME", "code-evaluator:latest")
 DOCKER_NETWORK_DISABLED = os.getenv("DOCKER_NETWORK_DISABLED", "True").lower() == "true"
+ALLOW_LOCAL_EVALUATION_FALLBACK = os.getenv("ALLOW_LOCAL_EVALUATION_FALLBACK", "False").lower() == "true"
 
 DATABASE_TYPE = "json"
 DATABASE_PATH = "program_database.json"

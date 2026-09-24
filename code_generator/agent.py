@@ -3,6 +3,7 @@ import re
 from typing import Optional, Dict, Any
 import asyncio
 
+import litellm
 from litellm import acompletion
 from litellm.exceptions import (
     APIError,
@@ -28,7 +29,7 @@ class CodeGeneratorAgent(CodeGeneratorInterface):
             "max_tokens": settings.LITELLM_MAX_TOKENS,
         }
         self.litellm_extra_params = {
-            "base_url": settings.LITELLM_DEFAULT_BASE_URL,
+            k: v for k, v in {"base_url": settings.LITELLM_DEFAULT_BASE_URL}.items() if v is not None
         }
         logger.info(f"CodeGeneratorAgent initialized with model: {self.model_name}")
 
@@ -82,6 +83,12 @@ Make sure your diff can be applied correctly!
         if temperature is not None:
             current_generation_config["temperature"] = temperature
             logger.debug(f"Using temperature override: {temperature}")
+        current_generation_config = {
+            k: v for k, v in current_generation_config.items() if v is not None
+        }
+        litellm_extra_params = {
+            k: v for k, v in (litellm_extra_params or {}).items() if v is not None
+        }
 
         retries = settings.API_MAX_RETRIES
         delay = settings.API_RETRY_DELAY_SECONDS
