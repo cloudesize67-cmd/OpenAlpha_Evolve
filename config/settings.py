@@ -82,7 +82,6 @@ EVALUATION_TIMEOUT_SECONDS = 800
 # Docker Execution Settings
 DOCKER_IMAGE_NAME = os.getenv("DOCKER_IMAGE_NAME", "code-evaluator:latest")
 DOCKER_NETWORK_DISABLED = os.getenv("DOCKER_NETWORK_DISABLED", "True").lower() == "true"
-ALLOW_LOCAL_EVALUATION_FALLBACK = os.getenv("ALLOW_LOCAL_EVALUATION_FALLBACK", "False").lower() == "true"
 
 DATABASE_TYPE = "json"
 DATABASE_PATH = "program_database.json"

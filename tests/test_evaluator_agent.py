@@ -47,7 +47,6 @@ class TestEvaluatorAgentDockerExecution(unittest.IsolatedAsyncioTestCase):
         self.mock_settings.DOCKER_IMAGE_NAME = "test-eval-image:latest"
         self.mock_settings.DOCKER_NETWORK_DISABLED = True
         self.mock_settings.EVALUATION_TIMEOUT_SECONDS = 5 # Short timeout for tests
-        self.mock_settings.ALLOW_LOCAL_EVALUATION_FALLBACK = False
         self.mock_docker_available_patcher = patch.object(EvaluatorAgent, '_is_docker_available', return_value=True)
         self.mock_docker_available_patcher.start()
 
@@ -189,23 +188,12 @@ class TestEvaluatorAgentDockerExecution(unittest.IsolatedAsyncioTestCase):
 
     @patch.object(EvaluatorAgent, '_is_docker_available', return_value=False)
     @patch('asyncio.create_subprocess_exec', new_callable=AsyncMock)
-    async def test_execute_code_safely_local_fallback(self, mock_create_subprocess_exec, _mock_docker_available):
-        self.mock_settings.ALLOW_LOCAL_EVALUATION_FALLBACK = True
-        expected_script_output = {
-            "test_outputs": [{"test_case_id": 0, "output": 42, "runtime_ms": 10.0, "status": "success"}],
-            "average_runtime_ms": 10.0
-        }
-        mock_proc_local = create_mock_subprocess(json.dumps(expected_script_output), "", 0)
-        mock_create_subprocess_exec.return_value = mock_proc_local
-
+    async def test_execute_code_safely_reports_missing_docker(self, mock_create_subprocess_exec, _mock_docker_available):
         results, error = await self.agent._execute_code_safely(self.program.code, self.task_definition)
 
-        self.assertIsNone(error)
-        self.assertEqual(results["test_outputs"][0]["output"], 42)
-        args, kwargs = mock_create_subprocess_exec.call_args
-        self.assertEqual(args[0], sys.executable)
-        self.assertTrue(args[1].endswith("temp_script.py"))
-        self.assertIn("cwd", kwargs)
+        self.assertIsNone(results)
+        self.assertIn("Docker is not available", error)
+        mock_create_subprocess_exec.assert_not_called()
 
 
     @patch('evaluator_agent.agent.EvaluatorAgent._execute_code_safely', new_callable=AsyncMock)
