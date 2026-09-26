@@ -120,7 +120,13 @@ orchestrator and owns the loop; the other five agents are its collaborators:
 mutations of low-fitness programs; `LLM_PRIMARY_MODEL` ("Pro" — stronger) takes
 over once a parent's correctness crosses
 `HIGH_FITNESS_THRESHOLD_FOR_PRIMARY_LLM` (default 0.8), and for bug-fixing.
-Leaving both roles unset collapses everything to `LITELLM_DEFAULT_MODEL`. All
+The actual fallback chain (`config/settings.py`): `LLM_PRIMARY_MODEL` defaults
+to `LITELLM_DEFAULT_MODEL`; `LLM_SECONDARY_MODEL` defaults to the legacy
+`FLASH_MODEL` var if it's set, otherwise to `LLM_PRIMARY_MODEL`. `.env.example`
+sets `FLASH_MODEL`, so leaving just the two role variables unset does **not**
+collapse both roles to the same model there — secondary resolves to
+`FLASH_MODEL` while primary resolves to `LITELLM_DEFAULT_MODEL`. Both roles
+only collapse to `LITELLM_DEFAULT_MODEL` when `FLASH_MODEL` is unset too. All
 LLM auth is handled by LiteLLM's own provider-prefixed env vars (e.g. a model
 string of `gemini/...` picks up `GEMINI_API_KEY` automatically) — there is no
 separate per-role API key.
@@ -155,6 +161,7 @@ in an agent.
 - Mutation/bug-fix prompts and their application are diff-based, not
   full-file replacement — preserve this when touching `PromptDesignerAgent` or
   `CodeGeneratorAgent._apply_diff`.
-- `program_database.json` and `data/runs/`, `data/best_corpus/` are the only
+- For the OpenAlpha_Evolve core, `data/runs/` and `data/best_corpus/` are the
   durable state; treat root-level `program_database.json` as scratch and
   `data/` as the place results should land (via `scripts/archive_run.py`).
+  (`eva/results/` is separately durable — see the `eva/` harness section above.)
